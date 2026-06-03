@@ -5,6 +5,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
 
 
@@ -155,6 +156,13 @@ def cluster_managers(
         lambda c: cluster_labels.get(c, f"Group {chr(65 + c)}")
     )
 
+    if scaled.shape[1] >= 2 and len(df) >= 3:
+        pca = PCA(n_components=2, random_state=42)
+        coords = pca.fit_transform(scaled)
+        df["pca_x"] = coords[:, 0].round(3)
+        df["pca_y"] = coords[:, 1].round(3)
+        df["pca_var_explained"] = round(sum(pca.explained_variance_ratio_) * 100, 1)
+
     return df
 
 
@@ -205,6 +213,26 @@ def create_cluster_scatter(clustered_df: pd.DataFrame) -> go.Figure:
     )
     fig.update_traces(textposition="top center", textfont_size=10)
     fig.update_layout(height=500)
+    return fig
+
+
+def create_pca_scatter(clustered_df: pd.DataFrame) -> go.Figure:
+    if clustered_df.empty or "pca_x" not in clustered_df.columns:
+        return go.Figure()
+
+    var_pct = clustered_df["pca_var_explained"].iloc[0] if "pca_var_explained" in clustered_df.columns else 0
+
+    fig = px.scatter(
+        clustered_df,
+        x="pca_x",
+        y="pca_y",
+        color="cluster_label",
+        text="manager",
+        title=f"PCA — Manager Style Space ({var_pct:.0f}% variance explained)",
+        labels={"pca_x": "Principal Component 1", "pca_y": "Principal Component 2"},
+    )
+    fig.update_traces(textposition="top center", textfont_size=10, marker_size=12)
+    fig.update_layout(height=450)
     return fig
 
 
