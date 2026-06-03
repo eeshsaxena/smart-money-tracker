@@ -89,6 +89,27 @@ def fetch_multi_month_portfolio(
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def fetch_all_manager_portfolios(
+    months: int = 3,
+) -> dict[str, pd.DataFrame]:
+    from config import FUND_MANAGERS
+
+    all_portfolios = {}
+    for mgr_key, mgr in FUND_MANAGERS.items():
+        mgr_frames = []
+        for fund in mgr["funds"]:
+            df = fetch_multi_month_portfolio(fund["scheme_code"], months)
+            if not df.empty:
+                df["fund_name"] = fund["name"]
+                df["manager"] = mgr["name"]
+                df["fund_category"] = fund.get("category", "")
+                mgr_frames.append(df)
+        if mgr_frames:
+            all_portfolios[mgr["name"]] = pd.concat(mgr_frames, ignore_index=True)
+
+    return all_portfolios
+
+
 def detect_accumulation_signals(
     portfolio_history: pd.DataFrame, threshold_pct: float = 1.0
 ) -> pd.DataFrame:
@@ -123,6 +144,22 @@ def detect_accumulation_signals(
                         "signal": "ACCUMULATE" if change > 0 else "EXIT",
                     }
                 )
+        elif pd.notna(curr) and pd.isna(prev):
+            signals.append({
+                "company": company,
+                "previous_pct": 0,
+                "current_pct": round(curr, 2),
+                "change_pct": round(curr, 2),
+                "signal": "NEW ENTRY",
+            })
+        elif pd.isna(curr) and pd.notna(prev):
+            signals.append({
+                "company": company,
+                "previous_pct": round(prev, 2),
+                "current_pct": 0,
+                "change_pct": round(-prev, 2),
+                "signal": "COMPLETE EXIT",
+            })
 
     return pd.DataFrame(signals).sort_values("change_pct", ascending=False)
 
@@ -157,3 +194,31 @@ def fetch_nav_data() -> pd.DataFrame:
                 }
             )
     return pd.DataFrame(records)
+
+
+def fetch_historical_nav(scheme_code: str, days: int = 365) -> pd.DataFrame:
+    url = f"https://api.mfapi.in/mf/{scheme_code}"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError):
+        return pd.DataFrame()
+
+    if "data" not in data:
+        return pd.DataFrame()
+
+    records = []
+    for entry in data["data"][:days]:
+        try:
+            records.append({
+                "date": pd.to_datetime(entry["date"], format="%d-%m-%Y"),
+                "nav": float(entry["nav"]),
+            })
+        except (ValueError, KeyError):
+            continue
+
+    df = pd.DataFrame(records)
+    if not df.empty:
+        df = df.sort_values("date").set_index("date")
+    return df

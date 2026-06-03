@@ -1,4 +1,4 @@
-"""Dash app layout."""
+"""Dash app layout — 6-tab MF Intelligence Dashboard."""
 
 import dash_bootstrap_components as dbc
 from dash import dcc, html
@@ -20,15 +20,9 @@ navbar = dbc.Navbar(
                 ],
                 className="fs-4 fw-bold",
             ),
-            dbc.Nav(
-                [
-                    dbc.NavItem(dbc.NavLink("Holdings", href="#", active=True)),
-                    dbc.NavItem(dbc.NavLink("Overlap", href="#")),
-                    dbc.NavItem(dbc.NavLink("Style Drift", href="#")),
-                    dbc.NavItem(dbc.NavLink("SIP XIRR", href="#")),
-                    dbc.NavItem(dbc.NavLink("Attribution", href="#")),
-                ],
-                navbar=True,
+            html.Span(
+                "MF Intelligence Dashboard",
+                className="text-light opacity-75 ms-3 d-none d-md-inline",
             ),
         ],
         fluid=True,
@@ -48,14 +42,19 @@ def create_layout():
                     dbc.Tabs(
                         [
                             dbc.Tab(
+                                _smart_money_tab(),
+                                label="Smart Money Flow",
+                                tab_id="tab-smart-money",
+                            ),
+                            dbc.Tab(
                                 _holdings_tab(),
-                                label="Fund Manager Holdings",
+                                label="Fund Holdings",
                                 tab_id="tab-holdings",
                             ),
                             dbc.Tab(
-                                _overlap_tab(),
-                                label="Portfolio Overlap",
-                                tab_id="tab-overlap",
+                                _fingerprint_tab(),
+                                label="Manager Fingerprint",
+                                tab_id="tab-fingerprint",
                             ),
                             dbc.Tab(
                                 _drift_tab(),
@@ -68,21 +67,90 @@ def create_layout():
                                 tab_id="tab-xirr",
                             ),
                             dbc.Tab(
+                                _overlap_tab(),
+                                label="Portfolio Overlap",
+                                tab_id="tab-overlap",
+                            ),
+                            dbc.Tab(
                                 _attribution_tab(),
                                 label="BHB Attribution",
                                 tab_id="tab-attribution",
                             ),
                         ],
                         id="main-tabs",
-                        active_tab="tab-holdings",
+                        active_tab="tab-smart-money",
                         className="mb-4",
                     ),
                 ],
                 fluid=True,
             ),
             dcc.Store(id="portfolio-store"),
+            dcc.Store(id="all-portfolios-store"),
             dcc.Store(id="classification-store"),
+            html.Footer(
+                dbc.Container(
+                    html.P(
+                        [
+                            "Data: AMFI India, SEBI Disclosures, NSE/BSE, yfinance | ",
+                            "Built with Plotly Dash",
+                        ],
+                        className="text-muted text-center small py-3 mb-0",
+                    ),
+                    fluid=True,
+                ),
+                className="mt-4 border-top",
+            ),
         ]
+    )
+
+
+def _smart_money_tab():
+    return dbc.Container(
+        [
+            dbc.Row(
+                [
+                    dbc.Col(
+                        [
+                            html.H4("Smart Money Flow Detector", className="mb-2"),
+                            html.P(
+                                "What are India's top fund managers collectively buying and selling right now? "
+                                "Aggregated signals across all tracked managers.",
+                                className="text-muted",
+                            ),
+                        ],
+                        md=8,
+                    ),
+                    dbc.Col(
+                        [
+                            dbc.Label("Months to Compare"),
+                            dbc.Select(
+                                id="flow-months",
+                                options=[{"label": f"{m} months", "value": str(m)} for m in [2, 3, 6]],
+                                value="3",
+                            ),
+                        ],
+                        md=2,
+                    ),
+                    dbc.Col(
+                        dbc.Button(
+                            "Scan All Managers",
+                            id="scan-flow-btn",
+                            color="success",
+                            className="w-100 mt-4",
+                        ),
+                        md=2,
+                    ),
+                ],
+                className="mb-4",
+            ),
+            loading_spinner("flow-output"),
+            html.Hr(),
+            html.H5("Conviction Scores", className="mt-3"),
+            html.P("Stocks ranked by aggregate weight across all fund managers.", className="text-muted small"),
+            loading_spinner("conviction-output"),
+        ],
+        fluid=True,
+        className="py-3",
     )
 
 
@@ -112,7 +180,7 @@ def _holdings_tab():
                                 id="months-select",
                                 options=[
                                     {"label": f"{m} months", "value": str(m)}
-                                    for m in [3, 6, 9, 12]
+                                    for m in [3, 6, 9, 12, 24]
                                 ],
                                 value="6",
                                 className="mb-3",
@@ -136,23 +204,112 @@ def _holdings_tab():
     )
 
 
+def _fingerprint_tab():
+    return dbc.Container(
+        [
+            html.H4("Fund Manager Style Fingerprint", className="mb-2"),
+            html.P(
+                "Large vs mid vs small cap tilt, growth vs value score, sector concentration (Herfindahl), "
+                "turnover ratio. Managers clustered by K-Means — find who thinks alike.",
+                className="text-muted",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col(
+                        [
+                            dbc.Label("Select Manager for Radar"),
+                            dbc.Select(
+                                id="fingerprint-manager",
+                                options=[
+                                    {"label": f"{m['name']} ({m['amc']})", "value": k}
+                                    for k, m in FUND_MANAGERS.items()
+                                ],
+                                value=list(FUND_MANAGERS.keys())[0],
+                            ),
+                        ],
+                        md=4,
+                    ),
+                    dbc.Col(
+                        [
+                            dbc.Label("Number of Clusters"),
+                            dbc.Select(
+                                id="num-clusters",
+                                options=[{"label": str(n), "value": str(n)} for n in [2, 3, 4, 5]],
+                                value="3",
+                            ),
+                        ],
+                        md=2,
+                    ),
+                    dbc.Col(
+                        dbc.Button(
+                            "Compute Fingerprints",
+                            id="fingerprint-btn",
+                            color="primary",
+                            className="w-100 mt-4",
+                        ),
+                        md=3,
+                    ),
+                ],
+                className="mb-4",
+            ),
+            loading_spinner("fingerprint-output"),
+        ],
+        fluid=True,
+        className="py-3",
+    )
+
+
 def _overlap_tab():
     return dbc.Container(
         [
-            html.H5("Compare Funds", className="mb-3"),
+            html.H4("Portfolio Overlap Heatmap", className="mb-2"),
             html.P(
-                "Select multiple fund tickers to see portfolio overlap.",
+                "Most investors hold multiple funds thinking they're diversified — "
+                "often 70% of holdings are the same stocks. Check your overlap.",
                 className="text-muted",
             ),
-            dbc.Textarea(
-                id="overlap-tickers",
-                placeholder="Enter fund names (one per line)",
-                value="HDFC Flexi Cap Fund\nPPFAS Flexi Cap Fund",
-                style={"height": "120px"},
+            dbc.Row(
+                [
+                    dbc.Col(
+                        [
+                            dbc.Label("Select Funds to Compare"),
+                            dbc.Checklist(
+                                id="overlap-fund-checklist",
+                                options=[],
+                                value=[],
+                                className="mb-3",
+                            ),
+                        ],
+                        md=6,
+                    ),
+                    dbc.Col(
+                        [
+                            dbc.Label("Overlap Method"),
+                            dbc.RadioItems(
+                                id="overlap-method",
+                                options=[
+                                    {"label": "Jaccard (stock count)", "value": "jaccard"},
+                                    {"label": "Weighted (by AUM %)", "value": "weighted"},
+                                ],
+                                value="jaccard",
+                                className="mb-3",
+                            ),
+                        ],
+                        md=4,
+                    ),
+                    dbc.Col(
+                        dbc.Button(
+                            "Compute Overlap", id="overlap-btn", color="primary", className="w-100 mt-4"
+                        ),
+                        md=2,
+                    ),
+                ],
                 className="mb-3",
             ),
-            dbc.Button("Compute Overlap", id="overlap-btn", color="primary", className="mb-4"),
             loading_spinner("overlap-output"),
+            html.Hr(),
+            html.H5("Common Holdings Detail", className="mt-3"),
+            loading_spinner("common-holdings-output"),
         ],
         fluid=True,
         className="py-3",
@@ -162,31 +319,40 @@ def _overlap_tab():
 def _drift_tab():
     return dbc.Container(
         [
-            html.H5("Style-Drift Detector", className="mb-3"),
+            html.H4("Style-Drift Detector", className="mb-2"),
+            html.P(
+                "SEBI mandates market-cap allocation ranges for each fund category. "
+                "Track which funds are drifting outside their mandate — a real red flag for investors.",
+                className="text-muted",
+            ),
             dbc.Row(
                 [
                     dbc.Col(
                         [
-                            dbc.Label("Fund Category"),
+                            dbc.Label("Fund Category to Analyze"),
                             dbc.Select(
                                 id="drift-category",
                                 options=[
-                                    {"label": "Large Cap", "value": "large_cap"},
-                                    {"label": "Mid Cap", "value": "mid_cap"},
-                                    {"label": "Small Cap", "value": "small_cap"},
-                                    {"label": "Flexi Cap", "value": "flexi_cap"},
-                                    {"label": "Large & Mid Cap", "value": "large_and_mid_cap"},
+                                    {"label": "Large Cap (80%+ large)", "value": "large_cap"},
+                                    {"label": "Mid Cap (65%+ mid)", "value": "mid_cap"},
+                                    {"label": "Small Cap (65%+ small)", "value": "small_cap"},
+                                    {"label": "Flexi Cap (no mandate)", "value": "flexi_cap"},
+                                    {"label": "Large & Mid Cap (35% each)", "value": "large_and_mid_cap"},
+                                    {"label": "Multi Cap (25% each)", "value": "multi_cap"},
                                 ],
-                                value="flexi_cap",
+                                value="large_cap",
                             ),
                         ],
-                        md=4,
+                        md=5,
+                    ),
+                    dbc.Col(
+                        dbc.Button(
+                            "Scan for Drift", id="drift-btn", color="warning", className="w-100 mt-4"
+                        ),
+                        md=3,
                     ),
                 ],
-                className="mb-3",
-            ),
-            dbc.Button(
-                "Analyze Drift", id="drift-btn", color="warning", className="mb-4"
+                className="mb-4",
             ),
             loading_spinner("drift-output"),
         ],
@@ -201,17 +367,9 @@ def _xirr_tab():
             sip_input_form(),
             loading_spinner("xirr-output"),
             html.Hr(),
-            html.H5("Peer Comparison", className="mt-4 mb-3"),
-            dbc.Textarea(
-                id="peer-tickers",
-                placeholder="Ticker=Name (one per line)\n0P0000XVAA.BO=PPFAS Flexi Cap\n0P0000XVAL.BO=HDFC Flexi Cap",
-                value="0P0000XVAA.BO=PPFAS Flexi Cap\n0P0000XVAL.BO=HDFC Flexi Cap",
-                style={"height": "100px"},
-                className="mb-3",
-            ),
-            dbc.Button(
-                "Compare Peers", id="peer-compare-btn", color="info", className="mb-4"
-            ),
+            loading_spinner("xirr-growth-chart"),
+            html.Hr(),
+            html.H5("Peer Comparison", className="mt-3"),
             loading_spinner("peer-output"),
         ],
         fluid=True,
@@ -222,9 +380,10 @@ def _xirr_tab():
 def _attribution_tab():
     return dbc.Container(
         [
-            html.H5("Brinson-Hood-Beebower Performance Attribution", className="mb-3"),
+            html.H4("Brinson-Hood-Beebower Performance Attribution", className="mb-2"),
             html.P(
-                "Decomposes fund alpha into allocation, selection, and interaction effects.",
+                "Decompose a fund's outperformance into: Allocation Effect (right sectors?), "
+                "Selection Effect (right stocks?), and Interaction Effect.",
                 className="text-muted",
             ),
             dbc.Button(
