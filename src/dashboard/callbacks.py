@@ -42,6 +42,18 @@ from src.analysis.overlap import (
     find_common_holdings,
     create_common_holdings_chart,
     create_overlap_sunburst,
+    create_venn_diagram,
+)
+from src.analysis.backtest import (
+    backtest_smart_money_signals,
+    create_backtest_chart,
+)
+from src.analysis.efficient_frontier import (
+    fetch_stock_prices,
+    compute_efficient_frontier,
+    optimize_portfolio,
+    create_efficient_frontier_chart,
+    create_allocation_pie,
 )
 from src.analysis.style_drift import (
     compute_drift_over_time,
@@ -368,11 +380,14 @@ def compute_and_display_overlap(n_clicks, stored_data, selected_funds, method):
 
     common = find_common_holdings(fund_holdings)
 
+    venn_fig = create_venn_diagram(fund_holdings) if 2 <= len(fund_holdings) <= 3 else None
+
     overlap_content = html.Div([
         dbc.Row([
             dbc.Col(dcc.Graph(figure=create_overlap_heatmap(matrix, title)), md=7),
-            dbc.Col(dcc.Graph(figure=create_overlap_sunburst(fund_holdings)), md=5),
+            dbc.Col(dcc.Graph(figure=venn_fig) if venn_fig else dcc.Graph(figure=create_overlap_sunburst(fund_holdings)), md=5),
         ]),
+        dbc.Row([dbc.Col(dcc.Graph(figure=create_overlap_sunburst(fund_holdings)))], className="mt-2") if venn_fig else html.Div(),
     ])
 
     common_content = html.Div()
@@ -725,3 +740,194 @@ def export_csv(n_clicks, stored_data):
     latest = portfolio[portfolio["date"] == portfolio["date"].max()]
     export_cols = [c for c in ["company", "sector", "quantity", "market_value_lakhs", "pct_aum", "market_cap_category"] if c in latest.columns]
     return dcc.send_data_frame(latest[export_cols].to_csv, "smart_money_holdings.csv", index=False)
+
+
+# ── Fund Screener ──
+
+@callback(
+    Output("screener-output", "children"),
+    Input("screen-btn", "n_clicks"),
+    State("screen-min-sharpe", "value"),
+    State("screen-max-dd", "value"),
+    State("screen-min-cagr", "value"),
+    State("screen-max-vol", "value"),
+    State("screen-period", "value"),
+    prevent_initial_call=True,
+)
+def screen_funds(n_clicks, min_sharpe, max_dd, min_cagr, max_vol, period):
+    min_sharpe = float(min_sharpe or 0)
+    max_dd = float(max_dd or -100)
+    min_cagr = float(min_cagr or 0)
+    max_vol = float(max_vol or 100)
+    period = period or "5y"
+
+    all_metrics = []
+    for mgr in FUND_MANAGERS.values():
+        for f in mgr["funds"]:
+            if f.get("ticker"):
+                nav = fetch_nav_series(f["ticker"], period)
+                if not nav.empty and len(nav) > 20:
+                    m = compute_risk_metrics(nav)
+                    m["fund_name"] = f["name"]
+                    m["manager"] = mgr["name"]
+                    m["category"] = f.get("category", "")
+                    all_metrics.append(m)
+
+    if not all_metrics:
+        return html.P("Could not fetch data.", className="text-warning")
+
+    df = pd.DataFrame(all_metrics)
+    original_count = len(df)
+
+    filtered = df[
+        (df["sharpe_ratio"].fillna(0) >= min_sharpe) &
+        (df["max_drawdown_pct"].fillna(-100) >= max_dd) &
+        (df["cagr_pct"].fillna(0) >= min_cagr) &
+        (df["volatility_pct"].fillna(100) <= max_vol)
+    ].sort_values("sharpe_ratio", ascending=False)
+
+    summary = dbc.Row([
+        dbc.Col(metric_card("Scanned", str(original_count), "funds"), md=3),
+        dbc.Col(metric_card("Passed Filter", str(len(filtered)), f"of {original_count}", "success" if len(filtered) > 0 else "danger"), md=3),
+        dbc.Col(metric_card("Best Sharpe", f"{filtered['sharpe_ratio'].max():.2f}" if not filtered.empty else "N/A", filtered.iloc[0]["fund_name"] if not filtered.empty else ""), md=3),
+        dbc.Col(metric_card("Lowest DD", f"{filtered['max_drawdown_pct'].max():.1f}%" if not filtered.empty else "N/A"), md=3),
+    ], className="mb-4")
+
+    if filtered.empty:
+        return html.Div([summary, dbc.Alert("No funds match your criteria. Try relaxing the filters.", color="warning")])
+
+    show_cols = ["fund_name", "manager", "category", "cagr_pct", "volatility_pct", "sharpe_ratio", "sortino_ratio", "max_drawdown_pct", "calmar_ratio"]
+    available = [c for c in show_cols if c in filtered.columns]
+
+    scatter = create_risk_return_scatter([row.to_dict() | {"name": row["fund_name"]} for _, row in filtered.iterrows()])
+
+    table = dash_table.DataTable(
+        data=filtered[available].round(2).to_dict("records"),
+        columns=[{"name": c.replace("_", " ").title(), "id": c} for c in available],
+        sort_action="native", page_size=20,
+        style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
+        style_header={"fontWeight": "bold"},
+        style_data_conditional=[{"if": {"row_index": 0}, "fontWeight": "bold"}],
+    )
+
+    return html.Div([summary, dcc.Graph(figure=scatter), table])
+
+
+# ── Backtest ──
+
+@callback(
+    Output("backtest-output", "children"),
+    Input("bt-btn", "n_clicks"),
+    State("bt-capital", "value"),
+    State("bt-top-n", "value"),
+    State("all-portfolios-store", "data"),
+    prevent_initial_call=True,
+)
+def run_backtest(n_clicks, capital, top_n, stored_data):
+    if not stored_data:
+        return dbc.Alert("Run Smart Money scan first to load data.", color="warning")
+
+    capital = float(capital or 100000)
+    top_n = int(top_n or 10)
+
+    all_portfolios = {name: pd.read_json(j) for name, j in json.loads(stored_data).items()}
+    combined = pd.concat([p for p in all_portfolios.values() if not p.empty], ignore_index=True)
+
+    if combined.empty:
+        return html.P("No data.", className="text-warning")
+
+    result = backtest_smart_money_signals(combined, capital, top_n)
+    eq_df = result.get("equity_curve", pd.DataFrame())
+    metrics = result.get("metrics", {})
+    trades = result.get("trades", pd.DataFrame())
+
+    if eq_df.empty:
+        return html.P("Not enough data for backtest (need 3+ months).", className="text-warning")
+
+    chart = create_backtest_chart(eq_df, capital)
+
+    m = metrics
+    cards = dbc.Row([
+        dbc.Col(metric_card("Strategy CAGR", f"{m.get('strategy_cagr_pct', 0):+.2f}%", f"{m.get('years', 0):.1f}Y",
+                            "success" if m.get("strategy_cagr_pct", 0) > 0 else "danger"), md=2),
+        dbc.Col(metric_card("Nifty CAGR", f"{m.get('benchmark_cagr_pct', 0):+.2f}%", "Buy & Hold"), md=2),
+        dbc.Col(metric_card("Alpha", f"{m.get('alpha_pct', 0):+.2f}%", "vs Nifty",
+                            "success" if m.get("alpha_pct", 0) > 0 else "danger"), md=2),
+        dbc.Col(metric_card("Sharpe", f"{m.get('sharpe_ratio', 0):.2f}"), md=2),
+        dbc.Col(metric_card("Max DD", f"{m.get('max_drawdown_pct', 0):.1f}%", color="danger"), md=2),
+        dbc.Col(metric_card("Rebalances", str(m.get("num_rebalances", 0))), md=2),
+    ], className="mb-4")
+
+    trades_section = html.Div()
+    if not trades.empty:
+        trades_section = html.Div([
+            html.H6("Trade Log", className="mt-3"),
+            dash_table.DataTable(
+                data=trades.to_dict("records"),
+                columns=[{"name": c.replace("_", " ").title(), "id": c} for c in trades.columns],
+                page_size=10, sort_action="native",
+                style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
+                style_header={"fontWeight": "bold"},
+            ),
+        ])
+
+    return html.Div([cards, dcc.Graph(figure=chart), trades_section])
+
+
+# ── Efficient Frontier ──
+
+@callback(
+    Output("frontier-output", "children"),
+    Input("frontier-btn", "n_clicks"),
+    State("portfolio-store", "data"),
+    State("frontier-n", "value"),
+    prevent_initial_call=True,
+)
+def compute_frontier(n_clicks, stored_data, max_n):
+    if not stored_data:
+        return dbc.Alert("Fetch holdings first in the Fund Holdings tab.", color="warning")
+
+    portfolio = pd.read_json(stored_data)
+    if portfolio.empty:
+        return html.P("No data.", className="text-warning")
+
+    max_n = int(max_n or 10)
+    latest = portfolio[portfolio["date"] == portfolio["date"].max()].sort_values("pct_aum", ascending=False)
+
+    symbols = latest["Symbol"].dropna().unique().tolist()[:max_n] if "Symbol" in latest.columns else []
+    if len(symbols) < 2:
+        company_syms = latest["company"].head(max_n).tolist()
+        return html.P(f"Need stock symbols to optimize. Found companies: {', '.join(company_syms[:5])}. "
+                       "Symbols are matched from NSE data — ensure holdings tab ran with classification.", className="text-warning")
+
+    prices = fetch_stock_prices(symbols)
+    if prices.shape[1] < 2:
+        return html.P("Could not fetch enough price data for optimization.", className="text-warning")
+
+    frontier = compute_efficient_frontier(prices, num_portfolios=3000)
+    optimal = optimize_portfolio(prices, "max_sharpe")
+    min_vol = optimize_portfolio(prices, "min_vol")
+
+    frontier_chart = create_efficient_frontier_chart(frontier, "Top Holdings")
+
+    content = [dcc.Graph(figure=frontier_chart)]
+
+    if optimal:
+        content.append(dbc.Row([
+            dbc.Col(metric_card("Optimal Return", f"{optimal['return_pct']:.1f}%", "Max Sharpe", "success"), md=3),
+            dbc.Col(metric_card("Optimal Vol", f"{optimal['volatility_pct']:.1f}%"), md=3),
+            dbc.Col(metric_card("Sharpe", f"{optimal['sharpe_ratio']:.2f}"), md=3),
+            dbc.Col(metric_card("Stocks Used", str(len(optimal.get("allocation", {})))), md=3),
+        ], className="mb-3"))
+
+        alloc_pie = create_allocation_pie(optimal.get("allocation", {}), "Max Sharpe Allocation")
+        content.append(dbc.Row([dbc.Col(dcc.Graph(figure=alloc_pie), md=6)]))
+
+    if min_vol:
+        content.append(dbc.Row([
+            dbc.Col(metric_card("Min Vol Return", f"{min_vol['return_pct']:.1f}%"), md=4),
+            dbc.Col(metric_card("Min Vol", f"{min_vol['volatility_pct']:.1f}%", "Lowest risk", "info"), md=4),
+            dbc.Col(metric_card("Min Vol Sharpe", f"{min_vol['sharpe_ratio']:.2f}"), md=4),
+        ], className="mt-3"))
+
+    return html.Div(content)

@@ -62,6 +62,9 @@ def create_layout():
                             dbc.Tab(_xirr_tab(), label="SIP XIRR", tab_id="tab-xirr"),
                             dbc.Tab(_overlap_tab(), label="Portfolio Overlap", tab_id="tab-overlap"),
                             dbc.Tab(_risk_tab(), label="Risk Analytics", tab_id="tab-risk"),
+                            dbc.Tab(_screener_tab(), label="Fund Screener", tab_id="tab-screener"),
+                            dbc.Tab(_backtest_tab(), label="Backtest", tab_id="tab-backtest"),
+                            dbc.Tab(_frontier_tab(), label="Efficient Frontier", tab_id="tab-frontier"),
                             dbc.Tab(_sector_tab(), label="Sector Breakdown", tab_id="tab-sector"),
                             dbc.Tab(_attribution_tab(), label="BHB Attribution", tab_id="tab-attribution"),
                         ],
@@ -336,6 +339,121 @@ def _risk_tab():
                 className="mb-4",
             ),
             loading_spinner("risk-output"),
+        ],
+        fluid=True,
+        className="py-3",
+    )
+
+
+def _screener_tab():
+    return dbc.Container(
+        [
+            html.H4("Fund Screener", className="mb-2"),
+            html.P(
+                "Filter and rank funds by risk-return metrics. Find funds matching your criteria.",
+                className="text-muted small",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col([
+                        dbc.Label("Min Sharpe Ratio"),
+                        dbc.Input(id="screen-min-sharpe", type="number", value=0.5, step=0.1, min=0),
+                    ], md=2),
+                    dbc.Col([
+                        dbc.Label("Max Drawdown (%)"),
+                        dbc.Input(id="screen-max-dd", type="number", value=-30, step=5, max=0),
+                    ], md=2),
+                    dbc.Col([
+                        dbc.Label("Min CAGR (%)"),
+                        dbc.Input(id="screen-min-cagr", type="number", value=8, step=1),
+                    ], md=2),
+                    dbc.Col([
+                        dbc.Label("Max Volatility (%)"),
+                        dbc.Input(id="screen-max-vol", type="number", value=30, step=5),
+                    ], md=2),
+                    dbc.Col([
+                        dbc.Label("Period"),
+                        dbc.Select(id="screen-period", options=[
+                            {"label": "3Y", "value": "3y"}, {"label": "5Y", "value": "5y"},
+                            {"label": "10Y", "value": "10y"},
+                        ], value="5y"),
+                    ], md=2),
+                    dbc.Col(
+                        dbc.Button([html.I(className="bi bi-funnel me-1"), "Screen"], id="screen-btn", color="primary", className="w-100 mt-4"),
+                        md=2,
+                    ),
+                ],
+                className="mb-4",
+            ),
+            loading_spinner("screener-output"),
+        ],
+        fluid=True,
+        className="py-3",
+    )
+
+
+def _backtest_tab():
+    return dbc.Container(
+        [
+            html.H4("Backtest: Follow the Smart Money", className="mb-2"),
+            html.P(
+                "If you bought the top stocks being accumulated by fund managers each month, "
+                "how would your portfolio have performed vs Nifty 50?",
+                className="text-muted small",
+            ),
+            dbc.Row(
+                [
+                    dbc.Col([
+                        dbc.Label("Initial Capital (INR)"),
+                        dbc.Input(id="bt-capital", type="number", value=100000, step=50000),
+                    ], md=3),
+                    dbc.Col([
+                        dbc.Label("Top N Stocks per Rebalance"),
+                        dbc.Select(id="bt-top-n", options=[
+                            {"label": str(n), "value": str(n)} for n in [5, 10, 15, 20]
+                        ], value="10"),
+                    ], md=3),
+                    dbc.Col(
+                        dbc.Button([html.I(className="bi bi-play-circle me-1"), "Run Backtest"], id="bt-btn", color="danger", className="w-100 mt-4"),
+                        md=3,
+                    ),
+                ],
+                className="mb-4",
+            ),
+            loading_spinner("backtest-output"),
+        ],
+        fluid=True,
+        className="py-3",
+    )
+
+
+def _frontier_tab():
+    return dbc.Container(
+        [
+            html.H4("Markowitz Efficient Frontier", className="mb-2"),
+            html.P(
+                "Mean-Variance Optimization across top fund holdings. "
+                "Find the optimal allocation that maximizes Sharpe ratio.",
+                className="text-muted small",
+            ),
+            dbc.Alert(
+                "Fetch holdings in Fund Holdings tab first. The optimizer uses top stocks from the latest portfolio.",
+                color="info",
+                className="small",
+            ),
+            dbc.Row([
+                dbc.Col([
+                    dbc.Label("Max stocks to optimize"),
+                    dbc.Select(id="frontier-n", options=[
+                        {"label": str(n), "value": str(n)} for n in [5, 10, 15, 20]
+                    ], value="10"),
+                ], md=3),
+                dbc.Col(
+                    dbc.Button([html.I(className="bi bi-bullseye me-1"), "Compute Frontier"], id="frontier-btn", color="success", className="w-100 mt-4"),
+                    md=3,
+                ),
+            ], className="mb-4"),
+            loading_spinner("frontier-output"),
         ],
         fluid=True,
         className="py-3",
