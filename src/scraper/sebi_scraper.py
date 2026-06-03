@@ -8,6 +8,8 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 
+from src.utils.cache import get_cached, set_cached
+
 AMFI_NAV_URL = "https://www.amfiindia.com/spages/NAVAll.txt"
 AMFI_PORTFOLIO_URL = "https://portal.amfiindia.com/DownloadSchemeData_Po.aspx"
 
@@ -22,6 +24,10 @@ HEADERS = {
 def fetch_scheme_portfolio(
     scheme_code: str, month: int, year: int
 ) -> Optional[pd.DataFrame]:
+    cached = get_cached("portfolio", scheme_code, month, year, ttl=86400)
+    if cached is not None and not cached.empty:
+        return cached
+
     params = {
         "mession": "24",
         "mession_code": scheme_code,
@@ -68,7 +74,10 @@ def fetch_scheme_portfolio(
     df["month"] = month
     df["year"] = year
     df["date"] = pd.to_datetime(f"{year}-{month:02d}-01")
-    return df.dropna(subset=["quantity"])
+    result = df.dropna(subset=["quantity"])
+    if not result.empty:
+        set_cached("portfolio", scheme_code, month, year, data=result)
+    return result
 
 
 def fetch_multi_month_portfolio(

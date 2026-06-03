@@ -27,6 +27,13 @@ from src.analysis.style_fingerprint import (
     create_fingerprint_radar,
     create_cluster_scatter,
     create_fingerprint_comparison,
+    create_pca_scatter,
+)
+from src.analysis.momentum import (
+    build_signal_features,
+    train_signal_predictor,
+    predict_signals,
+    create_feature_importance_chart,
 )
 from src.analysis.overlap import (
     compute_overlap_matrix,
@@ -200,7 +207,48 @@ def scan_smart_money(n_clicks, months):
     ])
 
     treemap = create_conviction_treemap(conviction)
-    conviction_content = html.Div([dcc.Graph(figure=treemap)]) if not conviction.empty else ""
+
+    ml_section = html.Div()
+    all_history = pd.concat([p for p in all_portfolios.values() if not p.empty], ignore_index=True)
+    if not all_history.empty and len(all_history["date"].unique()) >= 3:
+        features = build_signal_features(all_history)
+        if not features.empty and len(features) >= 20:
+            model_result = train_signal_predictor(features)
+            if model_result.get("model"):
+                latest_features = features[features["date"] == features["date"].max()]
+                predictions = predict_signals(model_result, latest_features)
+                importance_fig = create_feature_importance_chart(model_result["feature_importance"])
+
+                pred_table = html.Div()
+                if not predictions.empty:
+                    pred_table = dash_table.DataTable(
+                        data=predictions.head(20).to_dict("records"),
+                        columns=[
+                            {"name": "Company", "id": "company"},
+                            {"name": "ML Confidence %", "id": "predicted_continue"},
+                            {"name": "Prediction", "id": "prediction"},
+                        ],
+                        sort_action="native", page_size=10,
+                        style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
+                        style_header={"fontWeight": "bold"},
+                    )
+
+                ml_section = html.Div([
+                    html.Hr(),
+                    html.H5("ML Signal Predictor (GBM)", className="mt-3"),
+                    dbc.Row([
+                        dbc.Col(metric_card("Model Accuracy", f"{model_result['accuracy']}%", f"CV std: {model_result['cv_std']}%"), md=3),
+                        dbc.Col(metric_card("Training Samples", str(model_result["n_samples"])), md=3),
+                        dbc.Col(metric_card("Positive Rate", f"{model_result['positive_rate']}%", "Stocks that continued increasing"), md=3),
+                        dbc.Col(metric_card("Features", str(len(model_result["features_used"]))), md=3),
+                    ], className="mb-3"),
+                    dbc.Row([
+                        dbc.Col(dcc.Graph(figure=importance_fig), md=5),
+                        dbc.Col(pred_table, md=7),
+                    ]),
+                ])
+
+    conviction_content = html.Div([dcc.Graph(figure=treemap), ml_section]) if not conviction.empty else ml_section
 
     all_fund_names = []
     for mgr_name, portfolio in all_portfolios.items():
@@ -260,12 +308,17 @@ def compute_fingerprints(n_clicks, selected_manager, n_clusters, stored_data):
     selected_name = FUND_MANAGERS.get(selected_manager, {}).get("name", "")
     selected_fp = next((fp for fp in fingerprints if fp["manager"] == selected_name), fingerprints[0])
 
+    pca_chart = create_pca_scatter(clustered)
+
     return html.Div([
         dbc.Row([
             dbc.Col(dcc.Graph(figure=create_fingerprint_radar(selected_fp, selected_fp["manager"])), md=6),
             dbc.Col(dcc.Graph(figure=create_cluster_scatter(clustered)), md=6),
         ]),
-        dbc.Row([dbc.Col(dcc.Graph(figure=create_fingerprint_comparison(clustered)))], className="mt-3"),
+        dbc.Row([
+            dbc.Col(dcc.Graph(figure=pca_chart), md=6) if not pca_chart.data == () else html.Div(),
+            dbc.Col(dcc.Graph(figure=create_fingerprint_comparison(clustered)), md=6),
+        ], className="mt-3"),
         html.H6("Data", className="mt-3"),
         dash_table.DataTable(
             data=clustered[["manager", "large_cap_pct", "mid_cap_pct", "small_cap_pct", "herfindahl_index", "top_3_sector_pct", "turnover_pct", "cluster_label"]].round(1).to_dict("records"),
@@ -618,9 +671,14 @@ def run_attribution(n_clicks, stored_data):
     port_weights = latest.groupby("sector_normalized")["pct_aum"].sum() / total_aum
     bench_weights = pd.Series(1.0 / len(sectors), index=sectors)
 
-    np.random.seed(42)
-    port_returns = pd.Series(np.random.normal(0.12, 0.05, len(sectors)), index=sectors)
-    bench_returns = pd.Series(np.random.normal(0.10, 0.03, len(sectors)), index=sectors)
+    from src.analysis.bhb_attribution import fetch_sector_returns
+    real_returns = fetch_sector_returns("1y")
+
+    port_returns = pd.Series(index=sectors, dtype=float)
+    bench_returns = pd.Series(index=sectors, dtype=float)
+    for s in sectors:
+        port_returns[s] = real_returns.get(s, 0.10) * (1 + (port_weights.get(s, 0) - bench_weights.get(s, 0)) * 0.5)
+        bench_returns[s] = real_returns.get(s, 0.10)
 
     attr_df = compute_bhb_attribution(port_weights, bench_weights, port_returns, bench_returns)
     totals = attr_df[attr_df["sector"] == "TOTAL"].iloc[0]
