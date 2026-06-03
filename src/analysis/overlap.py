@@ -156,6 +156,76 @@ def create_common_holdings_chart(common_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+def create_venn_diagram(
+    fund_holdings: dict[str, pd.DataFrame],
+) -> go.Figure:
+    """Create a Venn-style visualization for 2-3 funds showing overlap counts."""
+    names = list(fund_holdings.keys())
+    if len(names) < 2 or len(names) > 3:
+        return go.Figure()
+
+    sets = {}
+    for name in names:
+        sets[name] = set(fund_holdings[name]["company"].str.upper().str.strip())
+
+    fig = go.Figure()
+
+    colors = ["rgba(41,121,255,0.35)", "rgba(0,200,83,0.35)", "rgba(255,145,0,0.35)"]
+    positions = [(0.35, 0.5), (0.65, 0.5), (0.5, 0.25)] if len(names) == 3 else [(0.38, 0.5), (0.62, 0.5)]
+
+    for i, name in enumerate(names):
+        x, y = positions[i]
+        fig.add_shape(
+            type="circle",
+            x0=x - 0.28, y0=y - 0.38, x1=x + 0.28, y1=y + 0.38,
+            fillcolor=colors[i],
+            line=dict(color=colors[i].replace("0.35", "0.8"), width=2),
+        )
+        label_y = y + 0.32 if i < 2 else y - 0.32
+        fig.add_annotation(
+            x=x, y=label_y,
+            text=f"<b>{name}</b><br>{len(sets[name])} stocks",
+            showarrow=False,
+            font=dict(size=11, color="#e8eaed"),
+        )
+
+    if len(names) == 2:
+        a, b = sets[names[0]], sets[names[1]]
+        only_a = len(a - b)
+        only_b = len(b - a)
+        both = len(a & b)
+        fig.add_annotation(x=0.28, y=0.5, text=f"<b>{only_a}</b><br>only", showarrow=False, font=dict(size=14, color="#2979ff"))
+        fig.add_annotation(x=0.50, y=0.5, text=f"<b>{both}</b><br>shared", showarrow=False, font=dict(size=14, color="#ff1744"))
+        fig.add_annotation(x=0.72, y=0.5, text=f"<b>{only_b}</b><br>only", showarrow=False, font=dict(size=14, color="#00c853"))
+
+    elif len(names) == 3:
+        a, b, c = sets[names[0]], sets[names[1]], sets[names[2]]
+        abc = len(a & b & c)
+        ab = len((a & b) - c)
+        ac = len((a & c) - b)
+        bc = len((b & c) - a)
+        only_a = len(a - b - c)
+        only_b = len(b - a - c)
+        only_c = len(c - a - b)
+
+        fig.add_annotation(x=0.25, y=0.55, text=f"<b>{only_a}</b>", showarrow=False, font=dict(size=13, color="#2979ff"))
+        fig.add_annotation(x=0.75, y=0.55, text=f"<b>{only_b}</b>", showarrow=False, font=dict(size=13, color="#00c853"))
+        fig.add_annotation(x=0.50, y=0.15, text=f"<b>{only_c}</b>", showarrow=False, font=dict(size=13, color="#ff9100"))
+        fig.add_annotation(x=0.50, y=0.58, text=f"<b>{ab}</b>", showarrow=False, font=dict(size=12, color="#e8eaed"))
+        fig.add_annotation(x=0.38, y=0.32, text=f"<b>{ac}</b>", showarrow=False, font=dict(size=12, color="#e8eaed"))
+        fig.add_annotation(x=0.62, y=0.32, text=f"<b>{bc}</b>", showarrow=False, font=dict(size=12, color="#e8eaed"))
+        fig.add_annotation(x=0.50, y=0.40, text=f"<b>{abc}</b><br>all 3", showarrow=False, font=dict(size=14, color="#ff1744"))
+
+    fig.update_layout(
+        title="Portfolio Overlap — Venn Diagram",
+        xaxis=dict(visible=False, range=[0, 1]),
+        yaxis=dict(visible=False, range=[0, 1], scaleanchor="x"),
+        height=450,
+        showlegend=False,
+    )
+    return fig
+
+
 def create_overlap_sunburst(
     fund_holdings: dict[str, pd.DataFrame],
 ) -> go.Figure:
