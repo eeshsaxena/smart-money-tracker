@@ -1,8 +1,9 @@
-"""Dash callbacks wiring UI interactions to all 6 analysis features."""
+"""Dash callbacks — all 9 features wired to UI."""
+
+import json
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 from dash import Input, Output, State, callback, html, dash_table, dcc, no_update
 import dash_bootstrap_components as dbc
 
@@ -46,11 +47,23 @@ from src.analysis.xirr_calc import (
     compare_category_peers,
     create_sip_growth_chart,
     create_peer_comparison_chart,
+    fetch_nav_series,
 )
 from src.analysis.bhb_attribution import (
     compute_bhb_attribution,
     create_attribution_chart,
     create_attribution_waterfall,
+)
+from src.analysis.risk_metrics import (
+    compute_risk_metrics,
+    create_risk_dashboard,
+    create_risk_return_scatter,
+)
+from src.analysis.sector_breakdown import (
+    create_sector_pie,
+    create_sector_treemap,
+    compute_sector_evolution,
+    create_sector_evolution_chart,
 )
 
 
@@ -87,11 +100,7 @@ def fetch_and_display_holdings(n_clicks, scheme_code, months, manager_key):
     portfolio = fetch_multi_month_portfolio(scheme_code, months)
 
     if portfolio.empty:
-        return (
-            empty_state("No data found. The fund may not have public disclosures yet.", "bi-database-x"),
-            "",
-            None,
-        )
+        return empty_state("No data found. Try a different fund or time range.", "bi-database-x"), "", None
 
     manager = FUND_MANAGERS.get(manager_key, {})
     fund_info = next((f for f in manager.get("funds", []) if f["scheme_code"] == scheme_code), {})
@@ -102,81 +111,57 @@ def fetch_and_display_holdings(n_clicks, scheme_code, months, manager_key):
     portfolio = match_holdings_to_classification(portfolio)
 
     latest_date = portfolio["date"].max()
-    latest = portfolio[portfolio["date"] == latest_date].copy()
-    latest = latest.sort_values("pct_aum", ascending=False)
+    latest = portfolio[portfolio["date"] == latest_date].copy().sort_values("pct_aum", ascending=False)
 
     holdings_table = dash_table.DataTable(
         data=latest[["company", "sector", "quantity", "market_value_lakhs", "pct_aum", "market_cap_category"]].to_dict("records"),
         columns=[
             {"name": "Company", "id": "company"},
             {"name": "Sector", "id": "sector"},
-            {"name": "Quantity", "id": "quantity", "type": "numeric", "format": {"specifier": ",.0f"}},
-            {"name": "Value (Lakhs)", "id": "market_value_lakhs", "type": "numeric", "format": {"specifier": ",.0f"}},
+            {"name": "Qty", "id": "quantity", "type": "numeric", "format": {"specifier": ",.0f"}},
+            {"name": "Value (L)", "id": "market_value_lakhs", "type": "numeric", "format": {"specifier": ",.0f"}},
             {"name": "% AUM", "id": "pct_aum", "type": "numeric", "format": {"specifier": ".2f"}},
-            {"name": "Cap Category", "id": "market_cap_category"},
+            {"name": "Cap", "id": "market_cap_category"},
         ],
-        page_size=25,
-        sort_action="native",
-        filter_action="native",
+        page_size=25, sort_action="native", filter_action="native",
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "left", "padding": "8px", "fontSize": "13px"},
-        style_header={"fontWeight": "bold", "backgroundColor": "#f8f9fa"},
-        style_data_conditional=[
-            {"if": {"filter_query": "{market_cap_category} = large_cap"}, "backgroundColor": "#E3F2FD"},
-            {"if": {"filter_query": "{market_cap_category} = mid_cap"}, "backgroundColor": "#FFF3E0"},
-            {"if": {"filter_query": "{market_cap_category} = small_cap"}, "backgroundColor": "#E8F5E9"},
-        ],
+        style_header={"fontWeight": "bold"},
     )
 
     large_pct = latest[latest["market_cap_category"] == "large_cap"]["pct_aum"].sum()
     mid_small_pct = latest[latest["market_cap_category"].isin(["mid_cap", "small_cap"])]["pct_aum"].sum()
-    num_sectors = latest["sector"].nunique()
 
-    summary = dbc.Row(
-        [
-            dbc.Col(metric_card("Total Stocks", str(len(latest)), f"as of {latest_date.strftime('%b %Y')}"), md=3),
-            dbc.Col(metric_card(
-                "Top Holding",
-                latest.iloc[0]["company"] if len(latest) > 0 else "N/A",
-                f"{latest.iloc[0]['pct_aum']:.1f}% AUM" if len(latest) > 0 else "",
-            ), md=3),
-            dbc.Col(metric_card("Large Cap", f"{large_pct:.1f}%", f"{num_sectors} sectors"), md=3),
-            dbc.Col(metric_card("Mid+Small Cap", f"{mid_small_pct:.1f}%"), md=3),
-        ],
-        className="mb-4",
-    )
+    summary = dbc.Row([
+        dbc.Col(metric_card("Total Stocks", str(len(latest)), f"as of {latest_date.strftime('%b %Y')}"), md=3),
+        dbc.Col(metric_card("Top Holding", latest.iloc[0]["company"] if len(latest) > 0 else "N/A", f"{latest.iloc[0]['pct_aum']:.1f}% AUM" if len(latest) > 0 else ""), md=3),
+        dbc.Col(metric_card("Large Cap", f"{large_pct:.1f}%", f"{latest['sector'].nunique()} sectors"), md=3),
+        dbc.Col(metric_card("Mid+Small", f"{mid_small_pct:.1f}%"), md=3),
+    ], className="mb-4")
 
     signals_df = detect_accumulation_signals(portfolio)
     if signals_df.empty:
-        signals_content = empty_state("No significant accumulation/exit signals detected.", "bi-arrow-left-right")
+        signals_content = empty_state("No significant signals detected.", "bi-arrow-left-right")
     else:
-        signal_rows = []
-        for _, row in signals_df.head(20).iterrows():
-            signal_rows.append(
-                html.Tr([
-                    html.Td(row["company"]),
-                    html.Td(f"{row['previous_pct']}%"),
-                    html.Td(f"{row['current_pct']}%"),
-                    html.Td(f"{row['change_pct']:+.2f}%"),
-                    html.Td(signal_badge(row["signal"])),
-                ])
-            )
+        signal_rows = [
+            html.Tr([
+                html.Td(row["company"]),
+                html.Td(f"{row['previous_pct']}%"),
+                html.Td(f"{row['current_pct']}%"),
+                html.Td(f"{row['change_pct']:+.2f}%"),
+                html.Td(signal_badge(row["signal"])),
+            ])
+            for _, row in signals_df.head(20).iterrows()
+        ]
         signals_content = dbc.Table(
-            [
-                html.Thead(html.Tr([html.Th(c) for c in ["Company", "Previous %", "Current %", "Change", "Signal"]])),
-                html.Tbody(signal_rows),
-            ],
+            [html.Thead(html.Tr([html.Th(c) for c in ["Company", "Prev %", "Curr %", "Change", "Signal"]])), html.Tbody(signal_rows)],
             bordered=True, hover=True, striped=True, responsive=True, className="mt-3",
         )
 
-    return (
-        html.Div([summary, holdings_table]),
-        signals_content,
-        portfolio.to_json(date_format="iso"),
-    )
+    return html.Div([summary, holdings_table]), signals_content, portfolio.to_json(date_format="iso")
 
 
-# ── Smart Money Flow tab ──
+# ── Smart Money Flow ──
 
 @callback(
     Output("flow-output", "children"),
@@ -192,12 +177,7 @@ def scan_smart_money(n_clicks, months):
     all_portfolios = fetch_all_manager_portfolios(months)
 
     if not all_portfolios:
-        return (
-            empty_state("Could not fetch portfolio data. Try again.", "bi-exclamation-triangle"),
-            "",
-            None,
-            [],
-        )
+        return empty_state("Could not fetch data. Try again.", "bi-exclamation-triangle"), "", None, []
 
     for name in all_portfolios:
         all_portfolios[name] = match_holdings_to_classification(all_portfolios[name])
@@ -206,30 +186,17 @@ def scan_smart_money(n_clicks, months):
     conviction = compute_conviction_scores(all_portfolios)
 
     flow_fig = create_flow_chart(signals)
-
-    signals_table = html.Div()
-    if not signals.empty:
-        display_cols = ["company", "net_change_pct", "num_funds_holding", "signal", "strength"]
-        available = [c for c in display_cols if c in signals.columns]
-        signals_table = dash_table.DataTable(
-            data=signals[available].head(30).to_dict("records"),
-            columns=[{"name": c.replace("_", " ").title(), "id": c} for c in available],
-            page_size=15,
-            sort_action="native",
-            style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
-            style_header={"fontWeight": "bold", "backgroundColor": "#f8f9fa"},
-        )
+    sig_count = lambda s: str(len(signals[signals["signal"] == s])) if not signals.empty and s in signals["signal"].values else "0"
 
     flow_content = html.Div([
         dbc.Row([
-            dbc.Col(metric_card("Managers Tracked", str(len(all_portfolios))), md=3),
-            dbc.Col(metric_card("Accumulation Signals", str(len(signals[signals["signal"] == "ACCUMULATE"])) if not signals.empty else "0", color="success"), md=3),
-            dbc.Col(metric_card("Exit Signals", str(len(signals[signals["signal"] == "EXIT"])) if not signals.empty else "0", color="danger"), md=3),
-            dbc.Col(metric_card("New Entries", str(len(signals[signals["signal"] == "NEW ENTRY"])) if not signals.empty and "NEW ENTRY" in signals["signal"].values else "0", color="info"), md=3),
+            dbc.Col(metric_card("Managers", str(len(all_portfolios))), md=3),
+            dbc.Col(metric_card("Accumulate", sig_count("ACCUMULATE"), color="success"), md=3),
+            dbc.Col(metric_card("Exit", sig_count("EXIT"), color="danger"), md=3),
+            dbc.Col(metric_card("New Entry", sig_count("NEW ENTRY"), color="info"), md=3),
         ], className="mb-4"),
         dcc.Graph(figure=flow_fig),
-        html.H6("Signal Details", className="mt-3"),
-        signals_table,
+        _signals_table(signals),
     ])
 
     treemap = create_conviction_treemap(conviction)
@@ -238,22 +205,30 @@ def scan_smart_money(n_clicks, months):
     all_fund_names = []
     for mgr_name, portfolio in all_portfolios.items():
         if "fund_name" in portfolio.columns:
-            for fn in portfolio["fund_name"].unique():
-                all_fund_names.append(fn)
+            all_fund_names.extend(portfolio["fund_name"].unique())
         else:
             all_fund_names.append(mgr_name)
 
-    checklist_options = [{"label": n, "value": n} for n in sorted(set(all_fund_names)) if n]
+    checklist = [{"label": n, "value": n} for n in sorted(set(all_fund_names)) if n]
 
-    serialized = {}
-    for name, df in all_portfolios.items():
-        serialized[name] = df.to_json(date_format="iso")
-
-    import json
-    return flow_content, conviction_content, json.dumps(serialized), checklist_options
+    serialized = {name: df.to_json(date_format="iso") for name, df in all_portfolios.items()}
+    return flow_content, conviction_content, json.dumps(serialized), checklist
 
 
-# ── Manager Fingerprint tab ──
+def _signals_table(signals):
+    if signals.empty:
+        return html.Div()
+    display_cols = [c for c in ["company", "net_change_pct", "num_funds_holding", "signal", "strength"] if c in signals.columns]
+    return dash_table.DataTable(
+        data=signals[display_cols].head(30).to_dict("records"),
+        columns=[{"name": c.replace("_", " ").title(), "id": c} for c in display_cols],
+        page_size=15, sort_action="native",
+        style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
+        style_header={"fontWeight": "bold"},
+    )
+
+
+# ── Manager Fingerprint ──
 
 @callback(
     Output("fingerprint-output", "children"),
@@ -264,69 +239,45 @@ def scan_smart_money(n_clicks, months):
     prevent_initial_call=True,
 )
 def compute_fingerprints(n_clicks, selected_manager, n_clusters, stored_data):
-    import json
-
     if not stored_data:
-        return dbc.Alert(
-            "Run 'Scan All Managers' in Smart Money Flow tab first to load portfolio data.",
-            color="warning",
-        )
+        return dbc.Alert("Run Smart Money scan first to load data.", color="warning")
 
-    all_portfolios = {}
-    raw = json.loads(stored_data)
-    for name, json_str in raw.items():
-        all_portfolios[name] = pd.read_json(json_str)
+    all_portfolios = {name: pd.read_json(j) for name, j in json.loads(stored_data).items()}
+    n_clusters = int(n_clusters or 3)
 
-    n_clusters = int(n_clusters) if n_clusters else 3
     fingerprints = []
-
     for mgr_name, portfolio in all_portfolios.items():
         if portfolio.empty:
             continue
         latest = portfolio[portfolio["date"] == portfolio["date"].max()]
-        fp = compute_manager_fingerprint(latest, portfolio, mgr_name)
-        fingerprints.append(fp)
+        fingerprints.append(compute_manager_fingerprint(latest, portfolio, mgr_name))
 
     if not fingerprints:
-        return empty_state("No fingerprint data available.", "bi-fingerprint")
+        return empty_state("No fingerprint data.", "bi-fingerprint")
 
     clustered = cluster_managers(fingerprints, n_clusters)
 
     selected_name = FUND_MANAGERS.get(selected_manager, {}).get("name", "")
     selected_fp = next((fp for fp in fingerprints if fp["manager"] == selected_name), fingerprints[0])
-    radar = create_fingerprint_radar(selected_fp, selected_fp["manager"])
-    scatter = create_cluster_scatter(clustered)
-    comparison = create_fingerprint_comparison(clustered)
-
-    fp_table = dash_table.DataTable(
-        data=clustered[[
-            "manager", "large_cap_pct", "mid_cap_pct", "small_cap_pct",
-            "herfindahl_index", "top_3_sector_pct", "turnover_pct", "cluster_label",
-        ]].round(1).to_dict("records"),
-        columns=[
-            {"name": "Manager", "id": "manager"},
-            {"name": "Large %", "id": "large_cap_pct"},
-            {"name": "Mid %", "id": "mid_cap_pct"},
-            {"name": "Small %", "id": "small_cap_pct"},
-            {"name": "HHI", "id": "herfindahl_index"},
-            {"name": "Top 3 Sec %", "id": "top_3_sector_pct"},
-            {"name": "Turnover %", "id": "turnover_pct"},
-            {"name": "Cluster", "id": "cluster_label"},
-        ],
-        sort_action="native",
-        style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
-        style_header={"fontWeight": "bold", "backgroundColor": "#f8f9fa"},
-    )
 
     return html.Div([
-        dbc.Row([dbc.Col(dcc.Graph(figure=radar), md=6), dbc.Col(dcc.Graph(figure=scatter), md=6)]),
-        dbc.Row([dbc.Col(dcc.Graph(figure=comparison))], className="mt-3"),
-        html.H6("Fingerprint Data", className="mt-3"),
-        fp_table,
+        dbc.Row([
+            dbc.Col(dcc.Graph(figure=create_fingerprint_radar(selected_fp, selected_fp["manager"])), md=6),
+            dbc.Col(dcc.Graph(figure=create_cluster_scatter(clustered)), md=6),
+        ]),
+        dbc.Row([dbc.Col(dcc.Graph(figure=create_fingerprint_comparison(clustered)))], className="mt-3"),
+        html.H6("Data", className="mt-3"),
+        dash_table.DataTable(
+            data=clustered[["manager", "large_cap_pct", "mid_cap_pct", "small_cap_pct", "herfindahl_index", "top_3_sector_pct", "turnover_pct", "cluster_label"]].round(1).to_dict("records"),
+            columns=[{"name": c.replace("_", " ").title(), "id": c} for c in ["manager", "large_cap_pct", "mid_cap_pct", "small_cap_pct", "herfindahl_index", "top_3_sector_pct", "turnover_pct", "cluster_label"]],
+            sort_action="native",
+            style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
+            style_header={"fontWeight": "bold"},
+        ),
     ])
 
 
-# ── Portfolio Overlap tab ──
+# ── Portfolio Overlap ──
 
 @callback(
     Output("overlap-output", "children"),
@@ -338,18 +289,10 @@ def compute_fingerprints(n_clicks, selected_manager, n_clusters, stored_data):
     prevent_initial_call=True,
 )
 def compute_and_display_overlap(n_clicks, stored_data, selected_funds, method):
-    import json
-
     if not stored_data:
-        return (
-            dbc.Alert("Run 'Scan All Managers' in Smart Money Flow tab first.", color="warning"),
-            "",
-        )
+        return dbc.Alert("Run Smart Money scan first.", color="warning"), ""
 
-    all_portfolios = {}
-    raw = json.loads(stored_data)
-    for name, json_str in raw.items():
-        all_portfolios[name] = pd.read_json(json_str)
+    all_portfolios = {name: pd.read_json(j) for name, j in json.loads(stored_data).items()}
 
     fund_holdings = {}
     for mgr_name, portfolio in all_portfolios.items():
@@ -360,56 +303,42 @@ def compute_and_display_overlap(n_clicks, stored_data, selected_funds, method):
             for fn in latest["fund_name"].unique():
                 if not selected_funds or fn in selected_funds:
                     fund_holdings[fn] = latest[latest["fund_name"] == fn]
-        else:
-            if not selected_funds or mgr_name in selected_funds:
-                fund_holdings[mgr_name] = latest
+        elif not selected_funds or mgr_name in selected_funds:
+            fund_holdings[mgr_name] = latest
 
     if len(fund_holdings) < 2:
-        return (
-            dbc.Alert("Select at least 2 funds to compare. Run Smart Money scan first, then check funds.", color="warning"),
-            "",
-        )
+        return dbc.Alert("Select 2+ funds. Run Smart Money scan first, then check funds.", color="warning"), ""
 
-    if method == "weighted":
-        matrix = compute_weighted_overlap(fund_holdings)
-        title = "Weighted Portfolio Overlap (by AUM %)"
-    else:
-        matrix = compute_overlap_matrix(fund_holdings)
-        title = "Portfolio Overlap — Jaccard Similarity (%)"
-
-    heatmap = create_overlap_heatmap(matrix, title)
-    sunburst = create_overlap_sunburst(fund_holdings)
+    matrix_fn = compute_weighted_overlap if method == "weighted" else compute_overlap_matrix
+    title = "Weighted Overlap (AUM %)" if method == "weighted" else "Jaccard Similarity (%)"
+    matrix = matrix_fn(fund_holdings)
 
     common = find_common_holdings(fund_holdings)
-    common_chart = create_common_holdings_chart(common)
 
     overlap_content = html.Div([
-        dbc.Row([dbc.Col(dcc.Graph(figure=heatmap), md=7), dbc.Col(dcc.Graph(figure=sunburst), md=5)]),
+        dbc.Row([
+            dbc.Col(dcc.Graph(figure=create_overlap_heatmap(matrix, title)), md=7),
+            dbc.Col(dcc.Graph(figure=create_overlap_sunburst(fund_holdings)), md=5),
+        ]),
     ])
 
     common_content = html.Div()
     if not common.empty:
-        common_table = dash_table.DataTable(
-            data=common.head(25).to_dict("records"),
-            columns=[
-                {"name": "Company", "id": "company"},
-                {"name": "# Funds", "id": "num_funds"},
-                {"name": "Avg Weight %", "id": "avg_weight"},
-                {"name": "Held By", "id": "held_by"},
-            ],
-            sort_action="native",
-            style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
-            style_header={"fontWeight": "bold", "backgroundColor": "#f8f9fa"},
-        )
         common_content = html.Div([
-            dcc.Graph(figure=common_chart),
-            common_table,
+            dcc.Graph(figure=create_common_holdings_chart(common)),
+            dash_table.DataTable(
+                data=common.head(25).to_dict("records"),
+                columns=[{"name": c.replace("_", " ").title(), "id": c} for c in ["company", "num_funds", "avg_weight", "held_by"]],
+                sort_action="native",
+                style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
+                style_header={"fontWeight": "bold"},
+            ),
         ])
 
     return overlap_content, common_content
 
 
-# ── Style Drift tab ──
+# ── Style Drift ──
 
 @callback(
     Output("drift-output", "children"),
@@ -420,17 +349,14 @@ def compute_and_display_overlap(n_clicks, stored_data, selected_funds, method):
     prevent_initial_call=True,
 )
 def analyze_drift(n_clicks, stored_data, category, all_stored):
-    import json
-
     portfolio = pd.DataFrame()
     if stored_data:
         portfolio = pd.read_json(stored_data)
 
     if portfolio.empty and all_stored:
-        raw = json.loads(all_stored)
         frames = []
-        for name, json_str in raw.items():
-            df = pd.read_json(json_str)
+        for name, j in json.loads(all_stored).items():
+            df = pd.read_json(j)
             if not df.empty and "fund_category" in df.columns:
                 matching = df[df["fund_category"] == category]
                 if not matching.empty:
@@ -444,41 +370,35 @@ def analyze_drift(n_clicks, stored_data, category, all_stored):
     latest = portfolio[portfolio["date"] == portfolio["date"].max()]
     drift_result = detect_style_drift(latest, category)
     drift_history = compute_drift_over_time(portfolio, category)
-    drift_fig = create_drift_chart(drift_history, f"Fund ({category.replace('_', ' ').title()})")
-    gauge_fig = create_mandate_gauge(drift_result["allocation"], category)
-
-    severity_colors = {"critical": "danger", "warning": "warning", "minor": "info", "none": "success"}
-    severity_text = {
-        "critical": "CRITICAL DRIFT — Fund significantly outside mandate",
-        "warning": "WARNING — Fund drifting from mandate",
-        "minor": "MINOR — Slight deviation detected",
-        "none": "COMPLIANT — Within SEBI mandate",
-    }
 
     sev = drift_result.get("severity", "none")
+    severity_map = {
+        "critical": ("danger", "CRITICAL DRIFT"),
+        "warning": ("warning", "WARNING — Drifting"),
+        "minor": ("info", "MINOR deviation"),
+        "none": ("success", "COMPLIANT"),
+    }
+    color, text = severity_map.get(sev, ("success", "OK"))
 
-    violation_alerts = []
-    for v in drift_result.get("violations", []):
-        violation_alerts.append(
-            dbc.Alert(
-                f"{v['category'].replace('_', ' ').title()}: {v['actual_pct']:.1f}% actual "
-                f"(required {v['required_pct']:.1f}%, shortfall {v['shortfall_pct']:.1f}%)",
-                color="danger",
-                className="py-2",
-            )
+    violations = [
+        dbc.Alert(
+            f"{v['category'].replace('_', ' ').title()}: {v['actual_pct']:.1f}% (need {v['required_pct']:.1f}%, short {v['shortfall_pct']:.1f}%)",
+            color="danger", className="py-2",
         )
+        for v in drift_result.get("violations", [])
+    ]
 
     return html.Div([
-        dbc.Alert(severity_text[sev], color=severity_colors[sev], className="text-center fs-5"),
-        *violation_alerts,
+        dbc.Alert(text, color=color, className="text-center fs-5"),
+        *violations,
         dbc.Row([
-            dbc.Col(dcc.Graph(figure=gauge_fig), md=5),
-            dbc.Col(dcc.Graph(figure=drift_fig), md=7),
+            dbc.Col(dcc.Graph(figure=create_mandate_gauge(drift_result["allocation"], category)), md=5),
+            dbc.Col(dcc.Graph(figure=create_drift_chart(drift_history, f"Fund ({category.replace('_', ' ').title()})")), md=7),
         ]),
     ])
 
 
-# ── SIP XIRR tab ──
+# ── SIP XIRR ──
 
 @callback(
     Output("xirr-output", "children"),
@@ -493,53 +413,20 @@ def calculate_xirr(n_clicks, sip_amount, ticker, period):
     if not ticker or not sip_amount:
         return html.P("Enter ticker and SIP amount.", className="text-warning"), ""
 
-    sip_amount = float(sip_amount)
-    result = benchmark_sip(ticker, sip_amount, period)
-
-    fund = result["fund"]
-    bench = result["benchmark"]
+    result = benchmark_sip(ticker, float(sip_amount), period)
+    fund, bench = result["fund"], result["benchmark"]
 
     cards = dbc.Row([
-        dbc.Col(metric_card(
-            "Fund XIRR",
-            f"{fund['xirr']}%" if fund["xirr"] else "N/A",
-            f"Invested: INR {fund['total_invested']:,.0f}",
-            "success" if fund.get("xirr") and fund["xirr"] > 0 else "danger",
-        ), md=2),
-        dbc.Col(metric_card(
-            "Current Value",
-            f"INR {fund['current_value']:,.0f}" if fund["current_value"] else "N/A",
-            f"{fund['num_installments']} SIPs",
-        ), md=2),
-        dbc.Col(metric_card(
-            "Absolute Gain",
-            f"INR {fund.get('absolute_gain', 0):,.0f}",
-            f"{fund.get('absolute_gain_pct', 0):+.1f}%",
-            "success" if fund.get("absolute_gain", 0) > 0 else "danger",
-        ), md=2),
-        dbc.Col(metric_card(
-            "Nifty 50 XIRR",
-            f"{bench['xirr']}%" if bench["xirr"] else "N/A",
-            "Benchmark",
-        ), md=2),
-        dbc.Col(metric_card(
-            "Alpha vs Nifty",
-            f"{result['alpha']:+.2f}%" if result["alpha"] else "N/A",
-            "Outperformance" if result.get("alpha") and result["alpha"] > 0 else "Underperformance",
-            "success" if result.get("alpha") and result["alpha"] > 0 else "danger",
-        ), md=2),
-        dbc.Col(metric_card(
-            f"INR {sip_amount:,.0f}/mo grew to",
-            f"INR {fund['current_value']:,.0f}" if fund["current_value"] else "N/A",
-            f"over {fund['num_installments']} months",
-            "info",
-        ), md=2),
+        dbc.Col(metric_card("Fund XIRR", f"{fund['xirr']}%" if fund["xirr"] else "N/A", f"Invested: INR {fund['total_invested']:,.0f}", "success" if fund.get("xirr") and fund["xirr"] > 0 else "danger"), md=2),
+        dbc.Col(metric_card("Current Value", f"INR {fund['current_value']:,.0f}" if fund["current_value"] else "N/A", f"{fund['num_installments']} SIPs"), md=2),
+        dbc.Col(metric_card("Absolute Gain", f"INR {fund.get('absolute_gain', 0):,.0f}", f"{fund.get('absolute_gain_pct', 0):+.1f}%", "success" if fund.get("absolute_gain", 0) > 0 else "danger"), md=2),
+        dbc.Col(metric_card("Nifty 50 XIRR", f"{bench['xirr']}%" if bench["xirr"] else "N/A", "Benchmark"), md=2),
+        dbc.Col(metric_card("Alpha", f"{result['alpha']:+.2f}%" if result["alpha"] else "N/A", "vs Nifty", "success" if result.get("alpha") and result["alpha"] > 0 else "danger"), md=2),
+        dbc.Col(metric_card(f"INR {float(sip_amount):,.0f}/mo", f"INR {fund['current_value']:,.0f}" if fund["current_value"] else "N/A", f"{fund['num_installments']} months", "info"), md=2),
     ], className="mb-4")
 
-    growth_fig = create_sip_growth_chart(fund, bench, ticker)
-    growth_chart = dcc.Graph(figure=growth_fig)
-
-    return cards, growth_chart
+    growth = dcc.Graph(figure=create_sip_growth_chart(fund, bench, ticker))
+    return cards, growth
 
 
 @callback(
@@ -555,44 +442,154 @@ def compare_peers(n_clicks, peer_group, sip_amount, period):
         return html.P("Select a peer group.", className="text-warning")
 
     tickers = PEER_GROUPS[peer_group]
-    sip_amount = float(sip_amount or 10000)
-    period = period or "5y"
-
-    df = compare_category_peers(
-        {name: ticker for ticker, name in tickers.items()},
-        sip_amount,
-        period,
-    )
+    df = compare_category_peers({name: ticker for ticker, name in tickers.items()}, float(sip_amount or 10000), period or "5y")
 
     if df.empty:
-        return html.P("Could not fetch data for these tickers.", className="text-warning")
+        return html.P("Could not fetch data.", className="text-warning")
 
-    bar_fig = create_peer_comparison_chart(df)
+    available = [c for c in ["fund_name", "xirr", "total_invested", "current_value", "absolute_gain_pct", "num_installments"] if c in df.columns]
 
-    cols_to_show = ["fund_name", "xirr", "total_invested", "current_value", "absolute_gain_pct", "num_installments"]
-    available = [c for c in cols_to_show if c in df.columns]
-
-    table = dash_table.DataTable(
-        data=df[available].to_dict("records"),
-        columns=[
-            {"name": "Fund", "id": "fund_name"},
-            {"name": "XIRR (%)", "id": "xirr", "type": "numeric", "format": {"specifier": ".2f"}},
-            {"name": "Invested", "id": "total_invested", "type": "numeric", "format": {"specifier": ",.0f"}},
-            {"name": "Current Value", "id": "current_value", "type": "numeric", "format": {"specifier": ",.0f"}},
-            {"name": "Gain %", "id": "absolute_gain_pct", "type": "numeric", "format": {"specifier": "+.1f"}},
-            {"name": "SIPs", "id": "num_installments"},
-        ],
-        sort_action="native",
-        style_cell={"textAlign": "left", "padding": "8px"},
-        style_header={"fontWeight": "bold", "backgroundColor": "#f8f9fa"},
-        style_data_conditional=[
-            {"if": {"row_index": 0}, "backgroundColor": "#E8F5E9", "fontWeight": "bold"},
-        ],
-    )
-    return html.Div([dcc.Graph(figure=bar_fig), table])
+    return html.Div([
+        dcc.Graph(figure=create_peer_comparison_chart(df)),
+        dash_table.DataTable(
+            data=df[available].to_dict("records"),
+            columns=[{"name": c.replace("_", " ").title(), "id": c} for c in available],
+            sort_action="native",
+            style_cell={"textAlign": "left", "padding": "8px"},
+            style_header={"fontWeight": "bold"},
+            style_data_conditional=[{"if": {"row_index": 0}, "fontWeight": "bold"}],
+        ),
+    ])
 
 
-# ── BHB Attribution tab ──
+# ── Risk Analytics ──
+
+@callback(
+    Output("risk-output", "children"),
+    Input("risk-btn", "n_clicks"),
+    Input("risk-compare-btn", "n_clicks"),
+    State("risk-ticker", "value"),
+    State("risk-period", "value"),
+    prevent_initial_call=True,
+)
+def analyze_risk(single_click, compare_click, ticker, period):
+    from dash import ctx
+    triggered = ctx.triggered_id
+
+    if triggered == "risk-compare-btn":
+        return _risk_comparison(period)
+
+    if not ticker:
+        return html.P("Select a fund.", className="text-warning")
+
+    nav = fetch_nav_series(ticker, period or "5y")
+    if nav.empty:
+        return html.P("Could not fetch NAV data.", className="text-warning")
+
+    fund_name = ticker
+    for mgr in FUND_MANAGERS.values():
+        for f in mgr["funds"]:
+            if f.get("ticker") == ticker:
+                fund_name = f["name"]
+                break
+
+    metrics = compute_risk_metrics(nav)
+    dashboard = create_risk_dashboard(metrics, nav, fund_name)
+
+    m = dashboard["metrics"]
+
+    return html.Div([
+        dbc.Row([
+            dbc.Col(metric_card("CAGR", f"{m['cagr_pct']}%" if m["cagr_pct"] else "N/A", f"{m.get('years', '?')}Y", "success" if m.get("cagr_pct") and m["cagr_pct"] > 0 else "danger"), md=2),
+            dbc.Col(metric_card("Volatility", f"{m['volatility_pct']}%" if m["volatility_pct"] else "N/A", "Annualized"), md=2),
+            dbc.Col(metric_card("Sharpe", f"{m['sharpe_ratio']}" if m["sharpe_ratio"] else "N/A", ">1 is good", "success" if m.get("sharpe_ratio") and m["sharpe_ratio"] > 1 else "warning"), md=2),
+            dbc.Col(metric_card("Sortino", f"{m['sortino_ratio']}" if m["sortino_ratio"] else "N/A", ">2 is good", "success" if m.get("sortino_ratio") and m["sortino_ratio"] > 2 else "warning"), md=2),
+            dbc.Col(metric_card("Max Drawdown", f"{m['max_drawdown_pct']}%" if m["max_drawdown_pct"] else "N/A", "Peak to trough", "danger"), md=2),
+            dbc.Col(metric_card("VaR 95%", f"{m['var_95_pct']}%" if m["var_95_pct"] else "N/A", "Daily worst case", "danger"), md=2),
+        ], className="mb-4"),
+        dbc.Row([
+            dbc.Col(metric_card("Calmar", f"{m['calmar_ratio']}" if m["calmar_ratio"] else "N/A"), md=3),
+            dbc.Col(metric_card("Best Day", f"{m['best_day_pct']}%" if m["best_day_pct"] else "N/A", color="success"), md=3),
+            dbc.Col(metric_card("Worst Day", f"{m['worst_day_pct']}%" if m["worst_day_pct"] else "N/A", color="danger"), md=3),
+            dbc.Col(metric_card("Win Rate", f"{m['positive_days_pct']}%" if m["positive_days_pct"] else "N/A", "% positive days"), md=3),
+        ], className="mb-4"),
+        dbc.Row([dbc.Col(dcc.Graph(figure=dashboard["rolling_chart"]))]),
+        dbc.Row([
+            dbc.Col(dcc.Graph(figure=dashboard["drawdown_chart"]), md=6),
+            dbc.Col(dcc.Graph(figure=dashboard["monthly_heatmap"]), md=6),
+        ]),
+    ])
+
+
+def _risk_comparison(period):
+    all_metrics = []
+    for mgr in FUND_MANAGERS.values():
+        for f in mgr["funds"]:
+            if f.get("ticker"):
+                nav = fetch_nav_series(f["ticker"], period or "5y")
+                if not nav.empty:
+                    m = compute_risk_metrics(nav)
+                    m["name"] = f["name"]
+                    all_metrics.append(m)
+
+    if not all_metrics:
+        return html.P("Could not fetch data for comparison.", className="text-warning")
+
+    scatter = create_risk_return_scatter(all_metrics)
+    df = pd.DataFrame(all_metrics)
+    available = [c for c in ["name", "cagr_pct", "volatility_pct", "sharpe_ratio", "sortino_ratio", "max_drawdown_pct", "calmar_ratio"] if c in df.columns]
+
+    return html.Div([
+        dcc.Graph(figure=scatter),
+        html.H6("Risk Metrics Comparison", className="mt-3"),
+        dash_table.DataTable(
+            data=df[available].sort_values("sharpe_ratio", ascending=False).round(2).to_dict("records"),
+            columns=[{"name": c.replace("_", " ").title(), "id": c} for c in available],
+            sort_action="native",
+            style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
+            style_header={"fontWeight": "bold"},
+            style_data_conditional=[{"if": {"row_index": 0}, "fontWeight": "bold"}],
+        ),
+    ])
+
+
+# ── Sector Breakdown ──
+
+@callback(
+    Output("sector-output", "children"),
+    Input("main-tabs", "active_tab"),
+    State("portfolio-store", "data"),
+    prevent_initial_call=True,
+)
+def show_sector_breakdown(active_tab, stored_data):
+    if active_tab != "tab-sector":
+        return no_update
+
+    if not stored_data:
+        return empty_state("Fetch holdings in the Fund Holdings tab first.", "bi-pie-chart")
+
+    portfolio = pd.read_json(stored_data)
+    if portfolio.empty:
+        return empty_state("No data available.", "bi-pie-chart")
+
+    latest = portfolio[portfolio["date"] == portfolio["date"].max()]
+    fund_name = latest["fund_name"].iloc[0] if "fund_name" in latest.columns and not latest.empty else "Fund"
+
+    pie = create_sector_pie(latest, fund_name)
+    treemap = create_sector_treemap(latest, fund_name)
+    evolution = compute_sector_evolution(portfolio)
+    evolution_chart = create_sector_evolution_chart(evolution, fund_name)
+
+    return html.Div([
+        dbc.Row([
+            dbc.Col(dcc.Graph(figure=pie), md=5),
+            dbc.Col(dcc.Graph(figure=treemap), md=7),
+        ]),
+        dbc.Row([dbc.Col(dcc.Graph(figure=evolution_chart))], className="mt-3"),
+    ])
+
+
+# ── BHB Attribution ──
 
 @callback(
     Output("attribution-output", "children"),
@@ -602,16 +599,15 @@ def compare_peers(n_clicks, peer_group, sip_amount, period):
 )
 def run_attribution(n_clicks, stored_data):
     if not stored_data:
-        return dbc.Alert("Fetch holdings first in the Fund Holdings tab.", color="warning")
+        return dbc.Alert("Fetch holdings first.", color="warning")
 
     portfolio = pd.read_json(stored_data)
     if portfolio.empty or "sector" not in portfolio.columns:
-        return html.P("No sector data available for attribution.", className="text-warning")
+        return html.P("No sector data.", className="text-warning")
 
-    latest = portfolio[portfolio["date"] == portfolio["date"].max()]
+    latest = portfolio[portfolio["date"] == portfolio["date"].max()].copy()
 
     from config import SECTOR_MAP
-    latest = latest.copy()
     latest["sector_normalized"] = latest["sector"].map(SECTOR_MAP).fillna(latest["sector"])
     sectors = latest["sector_normalized"].dropna().unique()
 
@@ -627,39 +623,47 @@ def run_attribution(n_clicks, stored_data):
     bench_returns = pd.Series(np.random.normal(0.10, 0.03, len(sectors)), index=sectors)
 
     attr_df = compute_bhb_attribution(port_weights, bench_weights, port_returns, bench_returns)
-    bar_fig = create_attribution_chart(attr_df)
-    waterfall_fig = create_attribution_waterfall(attr_df)
-
     totals = attr_df[attr_df["sector"] == "TOTAL"].iloc[0]
 
-    summary = dbc.Row([
-        dbc.Col(metric_card("Allocation Effect", f"{totals['allocation_effect']:+.2f}%", "Sector weighting"), md=3),
-        dbc.Col(metric_card("Selection Effect", f"{totals['selection_effect']:+.2f}%", "Stock picking", color="success"), md=3),
-        dbc.Col(metric_card("Interaction Effect", f"{totals['interaction_effect']:+.2f}%", "Combined"), md=3),
-        dbc.Col(metric_card("Total Alpha", f"{totals['total_effect']:+.2f}%", "Net outperformance", color="info"), md=3),
-    ], className="mb-4")
-
-    detail_table = dash_table.DataTable(
-        data=attr_df.to_dict("records"),
-        columns=[
-            {"name": "Sector", "id": "sector"},
-            {"name": "Port Wt %", "id": "portfolio_weight", "type": "numeric", "format": {"specifier": ".1f"}},
-            {"name": "Bench Wt %", "id": "benchmark_weight", "type": "numeric", "format": {"specifier": ".1f"}},
-            {"name": "Allocation %", "id": "allocation_effect", "type": "numeric", "format": {"specifier": "+.3f"}},
-            {"name": "Selection %", "id": "selection_effect", "type": "numeric", "format": {"specifier": "+.3f"}},
-            {"name": "Total %", "id": "total_effect", "type": "numeric", "format": {"specifier": "+.3f"}},
-        ],
-        sort_action="native",
-        style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
-        style_header={"fontWeight": "bold", "backgroundColor": "#f8f9fa"},
-        style_data_conditional=[
-            {"if": {"filter_query": "{sector} = TOTAL"}, "fontWeight": "bold", "backgroundColor": "#E3F2FD"},
-        ],
-    )
-
     return html.Div([
-        summary,
-        dbc.Row([dbc.Col(dcc.Graph(figure=waterfall_fig), md=5), dbc.Col(dcc.Graph(figure=bar_fig), md=7)]),
-        html.H6("Attribution Detail by Sector", className="mt-3"),
-        detail_table,
+        dbc.Row([
+            dbc.Col(metric_card("Allocation", f"{totals['allocation_effect']:+.2f}%", "Sector weight"), md=3),
+            dbc.Col(metric_card("Selection", f"{totals['selection_effect']:+.2f}%", "Stock picks", color="success"), md=3),
+            dbc.Col(metric_card("Interaction", f"{totals['interaction_effect']:+.2f}%", "Combined"), md=3),
+            dbc.Col(metric_card("Total Alpha", f"{totals['total_effect']:+.2f}%", "Net", color="info"), md=3),
+        ], className="mb-4"),
+        dbc.Row([
+            dbc.Col(dcc.Graph(figure=create_attribution_waterfall(attr_df)), md=5),
+            dbc.Col(dcc.Graph(figure=create_attribution_chart(attr_df)), md=7),
+        ]),
+        html.H6("Detail", className="mt-3"),
+        dash_table.DataTable(
+            data=attr_df.to_dict("records"),
+            columns=[{"name": c.replace("_", " ").title(), "id": c} for c in ["sector", "portfolio_weight", "benchmark_weight", "allocation_effect", "selection_effect", "total_effect"]],
+            sort_action="native",
+            style_cell={"textAlign": "left", "padding": "6px", "fontSize": "13px"},
+            style_header={"fontWeight": "bold"},
+            style_data_conditional=[{"if": {"filter_query": "{sector} = TOTAL"}, "fontWeight": "bold"}],
+        ),
     ])
+
+
+# ── CSV Export ──
+
+@callback(
+    Output("csv-download", "data"),
+    Input("global-export-btn", "n_clicks"),
+    State("portfolio-store", "data"),
+    prevent_initial_call=True,
+)
+def export_csv(n_clicks, stored_data):
+    if not stored_data:
+        return no_update
+
+    portfolio = pd.read_json(stored_data)
+    if portfolio.empty:
+        return no_update
+
+    latest = portfolio[portfolio["date"] == portfolio["date"].max()]
+    export_cols = [c for c in ["company", "sector", "quantity", "market_value_lakhs", "pct_aum", "market_cap_category"] if c in latest.columns]
+    return dcc.send_data_frame(latest[export_cols].to_csv, "smart_money_holdings.csv", index=False)
