@@ -1,0 +1,313 @@
+/* Smart Money Tracker — Dark Professional Theme */
+
+:root {
+    --bg-primary: #0f1117;
+    --bg-secondary: #1a1d29;
+    --bg-card: #1e2130;
+    --bg-card-hover: #252840;
+    --text-primary: #e8eaed;
+    --text-secondary: #9aa0a6;
+    --accent-green: #00c853;
+    --accent-red: #ff1744;
+    --accent-blue: #2979ff;
+    --accent-orange: #ff9100;
+    --accent-teal: #00bfa5;
+    --border-color: #2d3142;
+}
+
+body {
+    background-color: var(--bg-primary) !important;
+    color: var(--text-primary) !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
+}
+
+/* Navbar */
+.navbar {
+    background: linear-gradient(135deg, #1a1d29 0%, #0d1117 100%) !important;
+    border-bottom: 1px solid var(--border-color);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+.navbar-brand {
+    color: var(--accent-teal) !important;
+    letter-spacing: 0.5px;
+}
+
+/* Cards */
+.card {
+    background: var(--bg-card) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 12px !important;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3) !important;
+    background: var(--bg-card-hover) !important;
+}
+
+.card-title {
+    font-weight: 700 !important;
+}
+
+.card-subtitle, .card-text {
+    color: var(--text-secondary) !important;
+}
+
+/* Tabs */
+.nav-tabs {
+    border-bottom: 2px solid var(--border-color) !important;
+}
+
+.nav-tabs .nav-link {
+    color: var(--text-secondary) !important;
+    border: none !important;
+    padding: 12px 20px !important;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    transition: color 0.2s;
+}
+
+.nav-tabs .nav-link:hover {
+    color: var(--accent-teal) !important;
+}
+
+.nav-tabs .nav-link.active {
+    color: var(--accent-teal) !important;
+    background: transparent !important;
+    border-bottom: 3px solid var(--accent-teal) !important;
+}
+
+/* Buttons */
+.btn-primary {
+    background: linear-gradient(135deg, var(--accent-blue) 0%, #1565c0 100%) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    padding: 10px 24px !important;
+    transition: transform 0.15s, box-shadow 0.15s;
+}
+
+.btn-primary:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 15px rgba(41, 121, 255, 0.4) !important;
+}
+
+.btn-success {
+    background: linear-gradient(135deg, var(--accent-green) 0%, #00a843 100%) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+}
+
+.btn-warning {
+    background: linear-gradient(135deg, var(--accent-orange) 0%, #e65100 100%) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    color: white !important;
+}
+
+.btn-info {
+    background: linear-gradient(135deg, var(--accent-teal) 0%, #00897b 100%) !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    color: white !important;
+}
+
+.btn-danger {
+    background: linear-gradient(135deg, var(--accent-red) 0%, #c62828 100%) !important;
+    border: none !important;
+    border-radius: 8px !important;
+}
+
+/* Form controls */
+.form-control, .form-select, select.form-select {
+    background-color: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+    border: 1px solid var(--border-color) !important;
+    border-radius: 8px !important;
+    padding: 10px 14px !important;
+}
+
+.form-control:focus, .form-select:focus {
+    box-shadow: 0 0 0 3px rgba(0, 191, 165, 0.25) !important;
+    border-color: var(--accent-teal) !important;
+}
+
+textarea.form-control {
+    background-color: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+}
+
+.form-label, label {
+    color: var(--text-secondary) !important;
+    font-weight: 500;
+    font-size: 0.85rem;
+}
+
+.form-check-input {
+    background-color: var(--bg-secondary) !important;
+    border-color: var(--border-color) !important;
+}
+
+.form-check-label {
+    color: var(--text-primary) !important;
+}
+
+/* Tables */
+.dash-table-container {
+    border-radius: 10px !important;
+    overflow: hidden;
+}
+
+.dash-spreadsheet-container .dash-spreadsheet-inner td {
+    background-color: var(--bg-card) !important;
+    color: var(--text-primary) !important;
+    border-color: var(--border-color) !important;
+}
+
+.dash-spreadsheet-container .dash-spreadsheet-inner th {
+    background: var(--bg-secondary) !important;
+    color: var(--accent-teal) !important;
+    border-color: var(--border-color) !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    font-size: 0.78rem;
+    letter-spacing: 0.5px;
+}
+
+.dash-spreadsheet-container .dash-spreadsheet-inner tr:hover td {
+    background-color: var(--bg-card-hover) !important;
+}
+
+.dash-spreadsheet-container .dash-spreadsheet-inner input {
+    background-color: var(--bg-secondary) !important;
+    color: var(--text-primary) !important;
+}
+
+/* Bootstrap table */
+.table {
+    color: var(--text-primary) !important;
+}
+
+.table-striped > tbody > tr:nth-of-type(odd) {
+    background-color: rgba(255, 255, 255, 0.03) !important;
+    color: var(--text-primary) !important;
+}
+
+.table-hover > tbody > tr:hover {
+    background-color: var(--bg-card-hover) !important;
+    color: var(--text-primary) !important;
+}
+
+.table thead th {
+    background: var(--bg-secondary) !important;
+    color: var(--accent-teal) !important;
+    border-color: var(--border-color) !important;
+}
+
+.table td, .table th {
+    border-color: var(--border-color) !important;
+}
+
+/* Alerts */
+.alert-success {
+    background: rgba(0, 200, 83, 0.15) !important;
+    color: var(--accent-green) !important;
+    border: 1px solid rgba(0, 200, 83, 0.3) !important;
+    border-radius: 10px !important;
+}
+
+.alert-danger {
+    background: rgba(255, 23, 68, 0.15) !important;
+    color: var(--accent-red) !important;
+    border: 1px solid rgba(255, 23, 68, 0.3) !important;
+    border-radius: 10px !important;
+}
+
+.alert-warning {
+    background: rgba(255, 145, 0, 0.15) !important;
+    color: var(--accent-orange) !important;
+    border: 1px solid rgba(255, 145, 0, 0.3) !important;
+    border-radius: 10px !important;
+}
+
+.alert-info {
+    background: rgba(0, 191, 165, 0.15) !important;
+    color: var(--accent-teal) !important;
+    border: 1px solid rgba(0, 191, 165, 0.3) !important;
+    border-radius: 10px !important;
+}
+
+/* Badges */
+.badge {
+    font-weight: 600 !important;
+    padding: 6px 12px !important;
+    border-radius: 20px !important;
+    font-size: 0.75rem !important;
+}
+
+/* Headings */
+h1, h2, h3, h4, h5, h6 {
+    color: var(--text-primary) !important;
+}
+
+.text-muted {
+    color: var(--text-secondary) !important;
+}
+
+/* Plotly chart backgrounds */
+.js-plotly-plot .plotly .main-svg {
+    background: transparent !important;
+}
+
+/* Footer */
+footer {
+    background: var(--bg-secondary) !important;
+    border-color: var(--border-color) !important;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--bg-primary);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #3d4260;
+}
+
+/* Loading spinner */
+._dash-loading {
+    color: var(--accent-teal) !important;
+}
+
+/* Horizontal rule */
+hr {
+    border-color: var(--border-color) !important;
+    opacity: 0.5;
+}
+
+/* Tab content area */
+.tab-content {
+    background: transparent;
+}
+
+/* Metric card text colors — override bootstrap */
+.text-primary { color: var(--accent-blue) !important; }
+.text-success { color: var(--accent-green) !important; }
+.text-danger { color: var(--accent-red) !important; }
+.text-info { color: var(--accent-teal) !important; }
+.text-warning { color: var(--accent-orange) !important; }
