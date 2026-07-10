@@ -1,5 +1,7 @@
 """Smart Money Tracker — MF Intelligence Dashboard."""
 
+import os
+
 import dash
 import dash_bootstrap_components as dbc
 import plotly.io as pio
@@ -38,4 +40,8 @@ server = app.server
 app.layout = create_layout()
 
 if __name__ == "__main__":
-    app.run(debug=True, port=8050)
+    app.run(
+        host=os.getenv("HOST", "127.0.0.1"),
+        port=int(os.getenv("PORT", "8050")),
+        debug=os.getenv("DASH_DEBUG", "false").lower() == "true",
+    )
