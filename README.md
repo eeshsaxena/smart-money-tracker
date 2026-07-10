@@ -70,6 +70,27 @@ python app.py
 
 Open [http://localhost:8050](http://localhost:8050).
 
+## Deployment
+
+Every data source is public, so this deploys with **no secrets and no database**.
+Holdings and NAV data are fetched on demand and cached under `data/cache/`.
+
+**Render** — `render.yaml` is a ready blueprint; point Render at this repo and
+deploy. The free plan is sufficient.
+
+**Any Docker host:**
+
+```bash
+docker build -t smart-money-tracker .
+docker run -p 8050:8050 smart-money-tracker
+```
+
+**Anything Procfile-based** (Railway, Heroku) works as-is.
+
+The server binds `$PORT` and runs under gunicorn as `app:server`. Requests that
+miss the cache scrape SEBI and AMFI, so the first load after a cold start is
+slow; the gunicorn timeout is raised to 180s to accommodate it.
+
 ## Running Tests
 
 ```bash
