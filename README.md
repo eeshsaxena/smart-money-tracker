@@ -1,130 +1,150 @@
-# Smart Money Tracker — MF Intelligence Dashboard
+# Smart Money Tracker
 
-SEBI mandates every mutual fund disclose their full portfolio holdings monthly — publicly, for free. This project scrapes those disclosures, cross-references with live stock prices, and builds a dashboard that answers: **what are India's top fund managers actually doing with money right now?**
+Analytics for Indian equity mutual funds built only on official, verifiable data:
 
-## Features
+- **Returns and risk** from AMFI NAV history.
+- **Holdings** from the monthly portfolio disclosures SEBI requires every AMC to publish.
 
-### 1. Smart Money Flow Detector
-Across all large/mid/small cap equity funds, which stocks are being collectively accumulated or exited by top managers this month vs. last? Ranked by net change in aggregate holding %. Conviction scores show the highest-weight stocks across all tracked managers.
-
-### 2. Fund Manager Style Fingerprint
-For each manager (Prashant Jain, Rajeev Thakkar, Saurabh Mukherjea, Nilesh Shah, S Naren, etc.):
-- Large vs mid vs small cap tilt
-- Growth vs value score (P/E, P/B of holdings vs index)
-- Sector concentration (Herfindahl index)
-- Turnover ratio (portfolio churn)
-- **K-Means clustering** to find "managers who think alike"
-
-### 3. Style Drift Detector
-Tracks each fund's actual market-cap breakdown over time. Flags funds drifting outside their SEBI mandate — a genuine red flag for investors. Shows mandate compliance gauges and severity ratings (critical/warning/minor).
-
-### 4. SIP XIRR Calculator with Peer Benchmarking
-Computes true XIRR (annualized return accounting for monthly cash flows — not fake point-to-point returns). Benchmarks against Nifty 50 and the best fund in the same category. SIP growth visualization shows how INR 1,000/month would have grown.
-
-### 5. Portfolio Overlap Heatmap
-Pick any 2–5 funds, see what % of portfolios overlap. Supports Jaccard (stock count) and weighted (by AUM %) methods. Shows common holdings detail and unique holdings per fund. Sunburst visualization of fund composition.
-
-### 6. Alpha Attribution (Brinson-Hood-Beebower)
-Decomposes fund outperformance into:
-- **Allocation effect** — did they overweight the right sectors?
-- **Selection effect** — did they pick the right stocks?
-- **Interaction effect** — combined
-
-## Fund Managers Tracked (10+)
-
-| Manager | AMC | Funds |
-|---------|-----|-------|
-| Prashant Jain | HDFC MF | Flexi Cap, Balanced Advantage, Top 100 |
-| Rajeev Thakkar | PPFAS MF | Flexi Cap, Conservative Hybrid |
-| Saurabh Mukherjea | Marcellus | Consistent Compounders |
-| Nilesh Shah | Kotak MF | Flexi Cap, Emerging Equity, Small Cap, Bluechip |
-| S Naren | ICICI Pru MF | Value Discovery, Bluechip, Midcap, Multicap |
-| Neelesh Surana | Mirae Asset MF | Large Cap, Midcap, Flexi Cap |
-| Shreyash Devalkar | Axis MF | Bluechip, Midcap, Small Cap, Flexi Cap |
-| R Srinivasan | SBI MF | Bluechip, Midcap, Small Cap, Flexi Cap |
-| Anish Tawakley | ICICI Pru MF | Flexi Cap |
-| Jinesh Gopani | Axis MF | Growth Opportunities |
-
-## Tech Stack
-
-Python | Pandas | Plotly Dash | scikit-learn | pyxirr | yfinance | BeautifulSoup
-
-## Data Sources (all free)
-
-| Source | What you get |
-|--------|-------------|
-| amfiindia.com | Daily NAV for every mutual fund scheme |
-| SEBI portfolio disclosures | Monthly stock-level holdings of every fund |
-| yfinance | Historical stock prices for alpha calculation |
-| Value Research scrape | AUM, category, fund manager name mapping |
-| NSE/BSE | Market cap classification (large/mid/small) per stock |
-
-## Setup
+It answers two kinds of question:
+- **How good is a fund?** Returns, risk, SIP outcomes and peer rank.
+- **What is its manager actually doing?** Which stocks were bought or sold, how much two funds overlap, and whether a fund stays inside its SEBI category.
 
 ```bash
-git clone https://github.com/eeshsaxena/smart-money-tracker.git
-cd smart-money-tracker
 pip install -r requirements.txt
-python app.py
+python -m smt refresh        # download, validate and store (about 2 minutes the first time)
+python -m smt check          # data-quality report
+python -m smt serve          # dashboard at http://127.0.0.1:8050
+python -m pytest             # 73 offline tests
 ```
 
-Open [http://localhost:8050](http://localhost:8050).
+## What it covers
 
-## Deployment
+| | Funds | Data |
+|---|---|---|
+| **NAV analytics** | 20 funds from 9 AMCs, plus a Nifty 50 index fund as benchmark | Full daily NAV history |
+| **Holdings analytics** | 11 funds: 3 from PPFAS, 8 from DSP | Last 6 month-end portfolios, every security |
 
-Every data source is public, so this deploys with **no secrets and no database**.
-Holdings and NAV data are fetched on demand and cached under `data/cache/`.
+### Dashboard tabs
 
-**Render** — `render.yaml` is a ready blueprint; point Render at this repo and
-deploy. The free plan is sufficient.
+| Tab | What it shows |
+|---|---|
+| **Scorecard** | 1Y/3Y/5Y returns, volatility, Sharpe, max drawdown, beta, alpha, rank within SEBI category |
+| **Fund** | Growth of ₹10,000 vs benchmark, rolling 3-year returns, drawdowns, calendar-year returns |
+| **SIP** | Monthly SIP simulation with XIRR, for any set of funds and start year |
+| **Portfolio builder** | Correlation of funds, efficient frontier, max-Sharpe and min-volatility mixes |
+| **Holdings** | Asset, sector and market-cap mix; concentration; month-on-month buys and sells; style drift vs SEBI rules |
+| **Smart money** | Stocks most bought and sold across all tracked funds, in ₹ crore |
+| **Overlap** | How much two portfolios overlap, plus a matrix of every pair |
+| **Data status** | Every data-quality check, fund verification, refresh log and source file used |
 
-**Any Docker host:**
+Example from the September 2026 data: PPFAS Flexi Cap raised its DLF stake from 13.7M to 52.8M shares, about ₹2,600 crore. That took DLF from 0.6% to 2.5% of the fund.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Sources
+        A[AMFI scheme master<br/>NAVAll.txt]
+        B[mfapi.in<br/>NAV history]
+        C[AMFI market-cap list<br/>half-yearly xlsx]
+        D[AMC disclosure pages<br/>PPFAS, DSP]
+    end
+    subgraph "Refresh pipeline (python -m smt refresh)"
+        V[1. Verify scheme codes]
+        N[2. NAV history]
+        M[3. Market-cap classes]
+        H[4. Holdings: connector → raw file cache → generic SEBI parser]
+    end
+    DB[(SQLite<br/>funds, nav, holdings,<br/>market_cap, refresh_log,<br/>disclosure_files)]
+    subgraph "Read side"
+        AN[analytics/<br/>pure functions]
+        UI[Dash dashboard]
+        CK[checks]
+    end
+    A --> V --> DB
+    B --> N --> DB
+    C --> M --> DB
+    D --> H --> DB
+    DB --> AN --> UI
+    DB --> CK --> UI
+```
+
+```
+smt/
+├── universe.py              the funds, by AMFI scheme code + the name AMFI must report for it
+├── sources/amfi.py          scheme master and market-cap list (pure parse_* + fetch_*)
+├── sources/mfapi.py         NAV history
+├── holdings/parser.py       one parser for every AMC's SEBI-format portfolio sheets
+├── holdings/connectors/     per-AMC: find the files, download them (ppfas.py, dsp.py)
+├── pipeline.py              the refresh steps, each logged and isolated
+├── store.py                 SQLite schema, writes (pipeline only) and reads
+├── checks.py                data-quality checks
+├── analytics/               performance, sip, portfolio, holdings: pure pandas functions
+└── dashboard/               Dash app: data loading, figures, layout and callbacks
+```
+
+## Design decisions
+
+- **The web app never calls the internet.** The refresh pipeline is the only writer; the dashboard only reads SQLite. Pages load instantly, and a source going down only makes the data older. The Data status tab shows how old.
+- **Scheme codes are verified on every refresh.** Each fund lists the name AMFI must report for its code. A mismatch is logged, the fund is excluded, and `smt check` fails. Version 1 had wrong codes for 24 of its 28 funds. Some pointed at debt funds and schemes closed years ago, and nothing noticed.
+- **Buying and selling are measured in shares, not weights.** A weight rises when a stock's price rises; a share count only rises when the fund buys. A share count that doubles while the weight stays flat is flagged as a likely split or bonus, not called a purchase.
+- **One parser, many AMCs.** SEBI fixes the columns of a portfolio disclosure but not the layout. The parser finds the header row and columns by their text, tracks section headings, and stops at GRAND TOTAL. It handles fractions or percentages, values in lakh or crore, and .xlsx, .xls or HTML-as-.xls files. A connector only has to find and download files: about 30 lines per AMC.
+- **Arbitrage stays separate from investing.** Stocks bought and hedged with futures are tagged `Equity - Arbitrage`. REITs, foreign stocks and overseas funds each get their own class, so "equity %" means directional Indian stock exposure.
+- **The benchmark is investable.** The Nifty 50 benchmark is the UTI Nifty 50 index fund's NAV. It includes that fund's small cost, which makes the comparison fair to active funds.
+- **Every number has a source.** Downloaded disclosure files are kept in `data/raw/`, and `disclosure_files` records each URL, month, size and the schemes matched. Re-parsing after a parser fix never re-downloads.
+- **Market-cap classes follow AMFI's official list.** That list puts the top 100 companies in large cap and 101–250 in mid cap. A stock split changes the ISIN but keeps its first 9 characters, which are used as a fallback key. That lifts coverage from 97% to 99.9% of equity weight.
+
+## Data quality
+
+`python -m smt check`, also shown on the Data status tab:
+
+| Check | Why |
+|---|---|
+| Scheme codes match AMFI names | catches wrong or reused codes |
+| NAV is current for every fund | catches a source that stopped updating |
+| At least one year of NAV history | warns on new funds, whose risk numbers would mislead |
+| Latest month present for every holdings fund | catches an AMC renaming its files |
+| Securities with an ISIN add up to 60–101% of NAV | catches a parser reading the wrong column or table |
+| Cash, TREPS and derivatives under 15% | flags funds with unusual non-stock exposure (warning only) |
+| Indian stocks with an AMFI market-cap class | style drift is only as good as this coverage |
+
+## Tests
+
+**73 offline tests:**
+- **Parser:** SEBI workbooks built in code, in both AMCs' layouts, with sections, arbitrage, REITs, foreign stocks, footnote tables, every date format and percent scale.
+- **Connectors:** link discovery from saved page snippets, including DSP's inconsistent file names.
+- **Analytics:** checked against hand-computed answers, for example a NAV compounding at exactly 10% a year, XIRR roots, and a min-volatility portfolio favouring the calmest fund.
+- **Pipeline:** full runs with fake sources, covering a wrong scheme code, a failing fund, cache reuse and idempotent reruns.
+- **Dashboard:** every Dash callback run through Flask on a seeded database.
+
+**Live tests:** `SMT_LIVE_TESTS=1 python -m pytest tests/test_live.py` checks the real sources. It verifies every scheme code against today's AMFI list and confirms each connector finds and parses its latest month.
+
+## Adding an AMC
+
+1. Write `smt/holdings/connectors/<amc>.py`: subclass `Connector` and implement `discover()` to return the month-end file URLs. Override `keep_member()` if the AMC ships zips.
+2. Register it in `smt/holdings/connectors/__init__.py`.
+3. Set `holdings="<amc>"` on its funds in `smt/universe.py`, then add a discovery test with a saved snippet of its page.
+
+HDFC, ICICI Prudential, SBI, Axis, Kotak, Mirae Asset and UTI load their disclosure lists with JavaScript or block scripted requests. Supporting them would need a headless browser, so they are NAV-only for now.
+
+## Limitations
+
+- **Past data only.** All analytics describe the past. The portfolio builder's weights summarise past returns; they are not a forecast or advice.
+- **Monthly holdings.** Disclosures are monthly, so a stock bought and sold within a month is invisible.
+- **Half-yearly market-cap list.** AMFI updates it twice a year and funds get time to rebalance. A small shortfall against a SEBI rule is a flag to investigate, not proof of a breach.
+- **Registered NAV dates.** NAVs come from mfapi.in, a free mirror of AMFI's archive. Holiday gaps are handled by using the last NAV on or before each date.
+
+## Deploying
+
+- **Render:** `render.yaml` refreshes the data at build time, then serves with gunicorn.
+- **Docker:** the container refreshes on start, then serves.
 
 ```bash
-docker build -t smart-money-tracker .
-docker run -p 8050:8050 smart-money-tracker
+docker build -t smart-money-tracker . && docker run -p 8050:8050 smart-money-tracker
 ```
 
-**Anything Procfile-based** (Railway, Heroku) works as-is.
-
-The server binds `$PORT` and runs under gunicorn as `app:server`. Requests that
-miss the cache scrape SEBI and AMFI, so the first load after a cold start is
-slow; the gunicorn timeout is raised to 180s to accommodate it.
-
-## Running Tests
-
-```bash
-pytest tests/ -v
-```
-
-## Project Structure
-
-```
-smart-money-tracker/
-├── app.py                              # Dash entry point
-├── config.py                           # Fund managers, thresholds, peer groups
-├── requirements.txt
-├── src/
-│   ├── scraper/
-│   │   ├── sebi_scraper.py             # AMFI/SEBI portfolio disclosure scraper
-│   │   ├── nse_classifier.py           # NSE/BSE market-cap classification
-│   │   └── value_research.py           # Value Research metadata scraper
-│   ├── analysis/
-│   │   ├── smart_money_flow.py         # Cross-fund accumulation/exit signals
-│   │   ├── style_fingerprint.py        # Manager fingerprint + K-Means clustering
-│   │   ├── style_drift.py              # SEBI mandate compliance detector
-│   │   ├── xirr_calc.py               # SIP XIRR + growth visualization
-│   │   ├── overlap.py                  # Portfolio overlap (Jaccard + weighted)
-│   │   └── bhb_attribution.py          # Brinson-Hood-Beebower attribution
-│   └── dashboard/
-│       ├── layout.py                   # 7-tab Dash layout
-│       ├── callbacks.py                # All interactive callbacks
-│       └── components.py               # Reusable UI components
-└── tests/
-    ├── test_analysis.py                # 30+ analysis tests
-    └── test_scraper.py                 # Scraper + config tests
-```
-
-## What Makes It Different
-
-Most tools (Value Research, Morningstar India) show trailing returns. This shows **why** — portfolio construction, manager behavior, and forward-looking signals. Strong for fintech DS roles at Zerodha, Groww, ET Money, INDmoney.
+Settings (environment variables):
+- `SMT_DB_PATH`
+- `SMT_DATA_DIR`
+- `SMT_RISK_FREE_RATE` (default 6.5%)
+- `SMT_HOLDINGS_MONTHS` (default 6)
