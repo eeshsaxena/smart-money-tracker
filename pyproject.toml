@@ -1,0 +1,23 @@
+[project]
+name = "smart-money-tracker"
+version = "2.0.0"
+description = "Indian mutual fund analytics on verified AMFI data and official portfolio disclosures"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = [
+    "ignore::DeprecationWarning:dash.development.base_component",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+# Explicit, so local runs and CI check the same rules whatever ruff's defaults become.
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]   # fixtures quote real AMC URLs and file names verbatim

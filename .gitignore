@@ -22,3 +22,9 @@ Thumbs.db
 .pytest_cache/
 htmlcov/
 .coverage
+
+# Smart Money Tracker data (rebuilt by `python -m smt refresh`)
+data/smt.db
+data/smt.db-*
+data/raw/
+data/cache/

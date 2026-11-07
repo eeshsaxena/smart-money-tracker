@@ -4,9 +4,11 @@ services:
     runtime: python
     plan: free
     region: singapore
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:server --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 180
+    # Data is downloaded and validated at build time, so every deploy ships fresh data
+    # and the web process never waits on AMFI or an AMC website.
+    buildCommand: pip install -r requirements.txt && python -m smt refresh --months 6
+    startCommand: gunicorn "smt.dashboard.app:server" --bind 0.0.0.0:$PORT --workers 2 --timeout 120
     healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11.9"
+        value: "3.12.7"
