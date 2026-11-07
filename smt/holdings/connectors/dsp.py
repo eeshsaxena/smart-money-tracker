@@ -11,8 +11,7 @@ from __future__ import annotations
 
 import re
 
-from smt.holdings.connectors.base import (Connector, DisclosureFile, month_end, month_year,
-                                          newest_first, page_links)
+from smt.holdings.connectors.base import Connector, DisclosureFile, month_end, month_year, newest_first, page_links
 
 
 class DSPConnector(Connector):

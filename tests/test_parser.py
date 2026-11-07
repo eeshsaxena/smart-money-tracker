@@ -96,8 +96,8 @@ def test_classify(isin, section, arb, expected):
 
 
 def test_html_saved_as_xls_is_read():
-    html = ("<table><tr><td>Y Fund</td></tr><tr><td>Portfolio as on 30 Sep 2026</td></tr>"
-            "<tr><td>Name of the Instrument</td><td>ISIN</td><td>% to Net Assets</td></tr>"
-            "<tr><td>HDFC Bank Limited</td><td>INE040A01034</td><td>5.5</td></tr></table>").encode()
+    html = (b"<table><tr><td>Y Fund</td></tr><tr><td>Portfolio as on 30 Sep 2026</td></tr>"
+            b"<tr><td>Name of the Instrument</td><td>ISIN</td><td>% to Net Assets</td></tr>"
+            b"<tr><td>HDFC Bank Limited</td><td>INE040A01034</td><td>5.5</td></tr></table>")
     out = parser.parse_workbook(html)
     assert out[0].scheme_title == "Y Fund" and out[0].holdings.loc[0, "pct_nav"] == 5.5

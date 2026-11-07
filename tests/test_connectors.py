@@ -3,11 +3,11 @@ from __future__ import annotations
 
 from datetime import date
 
+from smt import universe
 from smt.holdings.connectors import REGISTRY
 from smt.holdings.connectors.base import month_year
 from smt.holdings.connectors.dsp import DSPConnector
 from smt.holdings.connectors.ppfas import PPFASConnector
-from smt import universe
 from tests.conftest import portfolio, workbook, zip_of
 
 PPFAS_HTML = """

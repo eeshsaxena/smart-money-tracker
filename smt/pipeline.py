@@ -75,7 +75,8 @@ def refresh_universe(con: sqlite3.Connection, src: Sources, report: Report) -> N
             published = "" if amfi_row is None else str(amfi_row["scheme_name"])
             ok = universe.normalise(published) == universe.normalise(f.expected_name)
             if not ok:
-                report.mismatched.append(f"{f.scheme_code}: expected '{f.expected_name}', AMFI says '{published or 'not found'}'")
+                report.mismatched.append(
+                    f"{f.scheme_code}: expected '{f.expected_name}', AMFI says '{published or 'not found'}'")
             rows.append({
                 "scheme_code": f.scheme_code, "scheme_name": published or f.expected_name,
                 "expected_name": f.expected_name, "amc": f.amc,

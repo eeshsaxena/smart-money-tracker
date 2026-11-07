@@ -56,7 +56,7 @@ def simulate(nav: pd.Series, monthly: float, start: pd.Timestamp, end: pd.Timest
     df["value"] = df["cum_units"] * df["nav"]
     final_nav = float(nav.iloc[-1])
     value = float(df["cum_units"].iloc[-1] * final_nav)
-    flows = [(d.date(), -a) for d, a in zip(df["date"], df["amount"])] + [(nav.index[-1].date(), value)]
+    flows = [(d.date(), -a) for d, a in zip(df["date"], df["amount"], strict=True)] + [(nav.index[-1].date(), value)]
     return SipResult(df, float(df["amount"].sum()), value, xirr(flows))
 
 

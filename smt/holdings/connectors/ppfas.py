@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import re
 
-from smt.holdings.connectors.base import (Connector, DisclosureFile, month_end, month_year,
-                                          newest_first, page_links)
+from smt.holdings.connectors.base import Connector, DisclosureFile, month_end, month_year, newest_first, page_links
 
 FILE_RE = re.compile(
     r"/(?P<prefix>[A-Z]+)_PPFAS_Monthly_Portfolio_Report_(?P<rest>[A-Za-z]+_\d{1,2}_\d{4})\.xlsx?(\?|$)"

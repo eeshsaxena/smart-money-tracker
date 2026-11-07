@@ -48,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{row.status.upper():4}] {row.check}: {row.detail}")
         return 1 if (df["status"] == "fail").any() else 0
 
-    from smt.dashboard.app import create_app   # imported late: Dash is heavy
+    from smt.dashboard.app import create_app  # imported late: Dash is heavy
     create_app(args.db).run(host=args.host, port=args.port, debug=False)
     return 0
 

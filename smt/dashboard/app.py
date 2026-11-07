@@ -46,7 +46,8 @@ def table(df: pd.DataFrame, id_: str | None = None, formats: dict | None = None,
     return dash_table.DataTable(
         id=id_ or f"t{id(df)}", data=df.to_dict("records"), columns=cols, page_size=page_size,
         sort_action="native", style_table={"overflowX": "auto"},
-        style_cell={"fontFamily": "system-ui, -apple-system, 'Segoe UI', sans-serif", "fontSize": 13, "padding": "6px 10px", "textAlign": "left",
+        style_cell={"fontFamily": "system-ui, -apple-system, 'Segoe UI', sans-serif", "fontSize": 13,
+                    "padding": "6px 10px", "textAlign": "left",
                     "maxWidth": 320, "whiteSpace": "normal"},
         style_header={"fontWeight": 600, "backgroundColor": "#f1f5f9"}, **kw)
 
@@ -236,7 +237,8 @@ def register_callbacks(app: Dash, data: Data, score: pd.DataFrame) -> None:
         kpis = dbc.Row([
             kpi("Category", funds.at[code, "category_short"], funds.at[code, "amc"]),
             kpi("3Y return (annualised)", pct(tr["3Y"]), f"benchmark {pct(perf.period_return(b, 3))}"),
-            kpi("3Y Sharpe / beta", "–" if rm.get("sharpe") is None else f"{rm['sharpe']:.2f} / {rm.get('beta', 0):.2f}",
+            kpi("3Y Sharpe / beta",
+                "–" if rm.get("sharpe") is None else f"{rm['sharpe']:.2f} / {rm.get('beta', 0):.2f}",
                 f"alpha {pct(rm.get('alpha'))}"),
             kpi("Worst fall (3Y)", pct(rm.get("max_drawdown")), f"volatility {pct(rm.get('volatility'))}"),
         ])
@@ -263,7 +265,8 @@ def register_callbacks(app: Dash, data: Data, score: pd.DataFrame) -> None:
             res = sip_mod.simulate(s, float(amount), pd.Timestamp(int(start_year), 1, 1))
             if res.installments.empty:
                 continue
-            rows.append({"Fund": data.label(code), "First instalment": res.installments["date"].iloc[0].date().isoformat(),
+            first = res.installments["date"].iloc[0].date().isoformat()
+            rows.append({"Fund": data.label(code), "First instalment": first,
                          "Instalments": len(res.installments), "Invested (₹)": res.invested,
                          "Value (₹)": res.value, "Gain (₹)": res.value - res.invested, "XIRR": res.xirr})
             paths[data.label(code)] = sip_mod.value_path(s, res)["value"]
@@ -272,7 +275,8 @@ def register_callbacks(app: Dash, data: Data, score: pd.DataFrame) -> None:
         df = pd.DataFrame(rows).sort_values("XIRR", ascending=False)
         chart = fig.lines(pd.DataFrame(paths).ffill(), "Value of the SIP over time", pct=False)
         chart.update_yaxes(tickprefix="₹", tickformat=",.0f")
-        return table(df, "sip-dt", formats={"Invested (₹)": NUM0, "Value (₹)": NUM0, "Gain (₹)": NUM0, "XIRR": PCT}), chart
+        formats = {"Invested (₹)": NUM0, "Value (₹)": NUM0, "Gain (₹)": NUM0, "XIRR": PCT}
+        return table(df, "sip-dt", formats=formats), chart
 
     @app.callback(Output("port-frontier", "figure"), Output("port-weights", "children"),
                   Output("port-corr", "figure"), Input("port-funds", "value"))

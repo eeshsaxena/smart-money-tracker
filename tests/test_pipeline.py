@@ -1,7 +1,6 @@
 """End-to-end pipeline runs with fake sources: no network."""
 from __future__ import annotations
 
-
 from smt import checks, pipeline, store, universe
 from tests.conftest import fake_master
 

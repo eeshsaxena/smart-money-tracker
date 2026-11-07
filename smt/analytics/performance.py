@@ -105,7 +105,8 @@ def risk_metrics(nav: pd.Series, bench: pd.Series | None = None, years: float = 
             b_ret = period_return(bench.dropna(), years)
             out["beta"] = beta
             # Jensen's alpha, annualised: fund return minus CAPM-expected return
-            out["alpha"] = (ann_ret - (rf + beta * (b_ret - rf))) if (ann_ret is not None and b_ret is not None) else None
+            have_returns = ann_ret is not None and b_ret is not None
+            out["alpha"] = (ann_ret - (rf + beta * (b_ret - rf))) if have_returns else None
             up, down = both[both["b"] > 0], both[both["b"] < 0]
             out["up_capture"] = up["f"].mean() / up["b"].mean() if len(up) else None
             out["down_capture"] = down["f"].mean() / down["b"].mean() if len(down) else None
@@ -126,6 +127,6 @@ def category_rank(values: pd.Series, categories: pd.Series, higher_is_better: bo
     ranks = values.groupby(categories).rank(ascending=not higher_is_better, method="min")
     sizes = values.groupby(categories).transform("count")
     return pd.Series(
-        [f"{int(r)}/{int(s)}" if pd.notna(r) else "" for r, s in zip(ranks, sizes)],
+        [f"{int(r)}/{int(s)}" if pd.notna(r) else "" for r, s in zip(ranks, sizes, strict=True)],
         index=values.index,
     )

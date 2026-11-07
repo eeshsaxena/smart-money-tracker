@@ -86,7 +86,7 @@ def replace_nav(con: sqlite3.Connection, scheme_code: str, df: pd.DataFrame) -> 
         con.execute("DELETE FROM nav WHERE scheme_code = ?", (scheme_code,))
         con.executemany(
             "INSERT INTO nav VALUES (?,?,?)",
-            [(scheme_code, d.strftime("%Y-%m-%d"), float(v)) for d, v in zip(df["date"], df["nav"])],
+            [(scheme_code, d.strftime("%Y-%m-%d"), float(v)) for d, v in zip(df["date"], df["nav"], strict=True)],
         )
     return len(df)
 
