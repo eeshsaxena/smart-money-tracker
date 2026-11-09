@@ -83,11 +83,13 @@ def style_evidence(funds: pd.DataFrame, nav: pd.DataFrame, h: pd.DataFrame) -> d
 
 def flow_evidence(funds: pd.DataFrame, h: pd.DataFrame) -> dict:
     if h.empty:
-        return {"next_month": {"monthly": pd.DataFrame(), "summary": {}}, "after_a_month": {"summary": {}}}
+        return {"next_month": {"monthly": pd.DataFrame(), "summary": {}}, "after_a_month": {"summary": {}},
+                "robustness": pd.DataFrame()}
     codes = [c for c in funds.index if c in set(h["scheme_code"])]
     returns, trades = flows.panels(h, codes)
     return {"next_month": flows.follow_the_money(h, codes, 0, returns, trades),
             "after_a_month": flows.follow_the_money(h, codes, 1, returns, trades),
+            "robustness": flows.robustness(h, funds, returns, trades),
             "funds": len(codes), "trades": len(trades)}
 
 

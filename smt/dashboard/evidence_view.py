@@ -6,7 +6,7 @@ from dash import dcc, html
 
 from smt import report
 from smt.dashboard import figures as fig
-from smt.dashboard.components import NUM1, NUM2, PCT, PCT0, finding, kpi, note, pct, section, table
+from smt.dashboard.components import NUM1, NUM2, PCT, PCT0, PCT2, finding, kpi, note, pct, section, table
 
 
 def _index_section(ev: dict) -> html.Div:
@@ -57,8 +57,20 @@ def _flow_section(ev: dict) -> html.Div:
         ]),
         dcc.Graph(figure=fig.lines(growth, "Growth of 1 in each basket, held for the month after each disclosure",
                                    pct=False)),
+        *_robustness(ev["flows"].get("robustness")),
         note(report.FLOW_CAVEAT),
     )
+
+
+def _robustness(r) -> list:
+    if r is None or r.empty:
+        return []
+    view = r[["variant", "months", "spread", "t", "ci_low", "ci_high", "note"]].rename(columns={
+        "variant": "Variant", "months": "Months", "spread": "Bought minus sold", "ci_low": "95% low",
+        "ci_high": "95% high", "note": "Note"})
+    return [html.H6("Does it hold up?", className="mt-3"), finding(report.robustness_sentence(r)),
+            table(view, "ev-robust", formats={"Bought minus sold": PCT2, "95% low": PCT2, "95% high": PCT2,
+                                               "t": NUM2})]
 
 
 def _style_section(ev: dict) -> html.Div:

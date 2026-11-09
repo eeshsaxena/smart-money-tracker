@@ -8,6 +8,7 @@ from dash.dash_table.Format import Format, Scheme
 
 PCT = Format(precision=1, scheme=Scheme.percentage)
 PCT0 = Format(precision=0, scheme=Scheme.percentage)
+PCT2 = Format(precision=2, scheme=Scheme.percentage)
 NUM2 = Format(precision=2, scheme=Scheme.fixed)
 NUM1 = Format(precision=1, scheme=Scheme.fixed)
 NUM0 = Format(precision=0, scheme=Scheme.fixed).group(True)

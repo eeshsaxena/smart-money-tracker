@@ -42,6 +42,19 @@ Stocks the funds bought returned +0.76% a month against stocks they sold over th
 
 Based on 5,313 active trades from 2023-11-30 to 2026-08-31. 88% of sold stocks had a next-month price.
 
+**Does it hold up?** Repeated on 7 other cuts of the same data, the gap is positive in 7 and reaches t = 2 in 2 (new positions and full exits only, first half of the period). With this many cuts, one or two crossing t = 2 by chance is expected. Most of it came from Nov 2023 to Mar 2025 (+1.45% a month), against +0.06% from Apr 2025 to Aug 2026.
+
+| Variant | Months | Bought minus sold | t | 95% interval | Note |
+|---|---|---|---|---|---|
+| All active trades (main test) | 34 | +0.76% | 1.88 | -0.03% to +1.55% |  |
+| Waiting one more month | 33 | +0.09% | 0.24 | -0.68% to +0.87% | what a follower could act on after publication |
+| Two or more funds on the same side | 33 | +0.28% | 0.40 | -1.09% to +1.64% |  |
+| New positions and full exits only | 13 | +3.91% | 2.32 | +0.60% to +7.21% |  |
+| DSP funds only (8) | 34 | +0.61% | 1.26 | -0.34% to +1.56% |  |
+| PPFAS funds only (3) | 8 | +2.98% | 1.26 | -1.66% to +7.63% |  |
+| First half of the period | 17 | +1.45% | 2.30 | +0.21% to +2.68% | Nov 2023 to Mar 2025 |
+| Second half of the period | 17 | +0.06% | 0.14 | -0.84% to +0.97% | Apr 2025 to Aug 2026 |
+
 *Equal-weighted baskets from 11 funds at 2 AMCs, whose decisions aren't independent. Prices come from the disclosures, so a stock every tracked fund sold out of has no next price and drops from the sold basket. Portfolios are published about 10 days after month-end, so a follower can't earn all of the next-month return. Costs and taxes are ignored.*
 
 ## 3. Can NAV alone reveal a fund's style?

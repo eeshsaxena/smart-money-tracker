@@ -340,3 +340,27 @@ def test_optimiser_sentence_says_what_the_numbers_support():
     assert "No evidence" in report.optimiser_sentence({**base, "gap_t": -0.2, "gap_vs_equal": -0.01})
     assert "lost to" in report.optimiser_sentence({**base, "gap_t": -3.0, "gap_vs_equal": -0.01})
     assert "It beat" in report.optimiser_sentence({**base, "gap_t": 3.0, "gap_vs_equal": 0.01})
+
+
+def test_robustness_repeats_the_test_on_other_cuts():
+    h = many_stock_panel(n_months=20, signal=0.05)
+    funds = pd.DataFrame({"amc": ["X"]}, index=["A"])
+    returns, trades = flows.panels(h, ["A"])
+    r = flows.robustness(h, funds, returns, trades).set_index("variant")
+    assert {"All active trades (main test)", "Waiting one more month", "First half of the period",
+            "Second half of the period"} <= set(r.index)
+    same_month = r.drop(index="Waiting one more month")
+    assert (same_month["spread"] > 0).all()                      # a real signal keeps its sign
+    assert (r["ci_low"] <= r["spread"]).all() and (r["spread"] <= r["ci_high"]).all()
+    assert abs(r.loc["Waiting one more month", "spread"]) < 0.03   # the planted signal lasts one month
+
+
+def test_robustness_sentence_flags_how_many_cuts_pass_by_chance():
+    r = pd.DataFrame([
+        {"variant": "All active trades (main test)", "spread": 0.0076, "t": 1.9, "note": ""},
+        {"variant": "Waiting one more month", "spread": 0.0009, "t": 0.2, "note": ""},
+        {"variant": "First half of the period", "spread": 0.0145, "t": 2.3, "note": "Nov 2023 to Mar 2025"},
+        {"variant": "Second half of the period", "spread": 0.0006, "t": 0.1, "note": "Apr 2025 to Aug 2026"}])
+    text = report.robustness_sentence(r)
+    assert "positive in 3" in text and "reaches t = 2 in 1 (first half of the period)" in text
+    assert "Most of it came from Nov 2023 to Mar 2025" in text

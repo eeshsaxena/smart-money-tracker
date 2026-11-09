@@ -55,6 +55,27 @@ def flow_sentence(s: dict, later: dict) -> str:
     return first + second
 
 
+def robustness_sentence(r: pd.DataFrame) -> str:
+    """What the other cuts of the data say, worded from the table itself."""
+    if r.empty:
+        return ""
+    same_month = r[r["variant"] != "Waiting one more month"]
+    positive = int((same_month["spread"] > 0).sum())
+    clear = same_month[same_month["t"].abs() >= 2]
+    text = (f"Repeated on {len(same_month)} other cuts of the same data, the gap is positive in {positive} and "
+            f"reaches t = 2 in {len(clear)}"
+            + (f" ({', '.join(clear['variant'].str.lower())})" if len(clear) else "")
+            + ". With this many cuts, one or two crossing t = 2 by chance is expected.")
+    halves = r.set_index("variant")
+    if {"First half of the period", "Second half of the period"} <= set(halves.index):
+        a, b = halves.loc["First half of the period"], halves.loc["Second half of the period"]
+        if abs(a["spread"] - b["spread"]) > 0.005:
+            early, late = (a, b) if a["spread"] > b["spread"] else (b, a)
+            text += (f" Most of it came from {early['note']} ({_p(early['spread'], 2, signed=True)} a month), "
+                     f"against {_p(late['spread'], 2, signed=True)} from {late['note']}.")
+    return text
+
+
 def style_sentence(st: dict) -> str:
     e = st["errors"]
     return (f"From NAV alone, the estimate named the largest market-cap segment correctly for "
@@ -111,8 +132,18 @@ def build(evidence: dict, nav_date, holdings_date, n_funds: int) -> str:
             for name, x in (("Next month", s1), ("One month later", s2)) if x])
         out += ["## 2. Does following the money work?", "", flow_sentence(s1, s2), "", _table(rows), "",
                 f"Based on {fl['trades']:,} active trades from {s1['first'].date()} to {s1['last'].date()}. "
-                f"{_p(s1['coverage_sold'], 0)} of sold stocks had a next-month price.", "",
-                f"*{FLOW_CAVEAT}*", ""]
+                f"{_p(s1['coverage_sold'], 0)} of sold stocks had a next-month price.", ""]
+        r = fl.get("robustness", pd.DataFrame())
+        if not r.empty:
+            view = pd.DataFrame({
+                "Variant": r["variant"], "Months": r["months"],
+                "Bought minus sold": r["spread"].map(lambda v: _p(v, 2, signed=True)),
+                "t": r["t"].map("{:.2f}".format),
+                "95% interval": [f"{_p(lo, 2, signed=True)} to {_p(hi, 2, signed=True)}"
+                                 for lo, hi in zip(r["ci_low"], r["ci_high"], strict=True)],
+                "Note": r["note"]})
+            out += ["**Does it hold up?** " + robustness_sentence(r), "", _table(view), ""]
+        out += [f"*{FLOW_CAVEAT}*", ""]
 
     st = evidence["style"]
     if not st["validation"].empty:

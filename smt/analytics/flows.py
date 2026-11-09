@@ -74,12 +74,15 @@ def panels(h: pd.DataFrame, codes: list[str]) -> tuple[pd.DataFrame, pd.DataFram
         direction[relative < -ACTIVE_THRESHOLD] = -1
         direction[c["status"] == "New"] = 1
         direction[c["status"] == "Exited"] = -1
-        chosen = c.loc[direction != 0, ["isin", "scheme_code"]].assign(direction=direction[direction != 0], as_of=cur)
-        trades.append(chosen[["isin", "direction", "as_of", "scheme_code"]])
+        chosen = c.loc[direction != 0, ["isin", "scheme_code", "status"]].assign(
+            direction=direction[direction != 0], as_of=cur)
+        trades.append(chosen[TRADE_COLUMNS])
     ret = pd.DataFrame(returns).T.sort_index() if returns else pd.DataFrame()
-    tr = pd.concat(trades, ignore_index=True) if trades else pd.DataFrame(
-        columns=["isin", "direction", "as_of", "scheme_code"])
+    tr = pd.concat(trades, ignore_index=True) if trades else pd.DataFrame(columns=TRADE_COLUMNS)
     return ret, tr
+
+
+TRADE_COLUMNS = ["isin", "direction", "as_of", "scheme_code", "status"]
 
 
 def _t_stat(x: pd.Series) -> float:
@@ -88,8 +91,11 @@ def _t_stat(x: pd.Series) -> float:
 
 
 def follow_the_money(h: pd.DataFrame, codes: list[str], skip: int = 0, returns: pd.DataFrame | None = None,
-                     trades: pd.DataFrame | None = None) -> dict:
-    """Monthly returns of the bought and sold baskets, and the evidence for a difference."""
+                     trades: pd.DataFrame | None = None, min_net: int = 1) -> dict:
+    """Monthly returns of the bought and sold baskets, and the evidence for a difference.
+
+    `min_net` is how many more funds must be on one side than the other for a stock to count.
+    """
     if returns is None or trades is None:
         returns, trades = panels(h, codes)
     if returns.empty or trades.empty:
@@ -102,7 +108,7 @@ def follow_the_money(h: pd.DataFrame, codes: list[str], skip: int = 0, returns: 
             continue
         future = returns.loc[dates[dates.index(t) + 1 + skip]]
         n = net.loc[t]
-        bought, sold = n[n > 0].index, n[n < 0].index
+        bought, sold = n[n >= min_net].index, n[n <= -min_net].index
         held = H._stock_rows(h, t)["isin"].unique()
         rb, rs, ra = future.reindex(bought).dropna(), future.reindex(sold).dropna(), future.reindex(held).dropna()
         if len(rb) < 5 or len(rs) < 5:
@@ -125,3 +131,48 @@ def follow_the_money(h: pd.DataFrame, codes: list[str], skip: int = 0, returns: 
         "first": m["month"].min(), "last": m["month"].max(),
     }
     return {"monthly": m, "summary": summary}
+
+
+def _row(name: str, spread: pd.Series, note: str = "") -> dict:
+    spread = spread.dropna()
+    se = spread.std() / np.sqrt(len(spread)) if len(spread) > 2 else float("nan")
+    mean = float(spread.mean()) if len(spread) else float("nan")
+    return {"variant": name, "months": len(spread), "spread": mean, "t": _t_stat(spread),
+            "ci_low": mean - 1.96 * se, "ci_high": mean + 1.96 * se, "note": note}
+
+
+def robustness(h: pd.DataFrame, funds: pd.DataFrame, returns: pd.DataFrame, trades: pd.DataFrame) -> pd.DataFrame:
+    """The main test repeated on other reasonable cuts of the same data.
+
+    A real effect should keep its sign across them. One that appears in a single cut and
+    not the others is more likely noise found by looking. `funds` needs an `amc` column.
+    """
+    codes = sorted(set(trades["scheme_code"]))
+    main = follow_the_money(h, codes, 0, returns, trades)
+    if not main["summary"]:
+        return pd.DataFrame()
+    m = main["monthly"].sort_values("month")
+    rows = [_row("All active trades (main test)", m["spread"])]
+    later = follow_the_money(h, codes, 1, returns, trades)
+    if later["summary"]:
+        rows.append(_row("Waiting one more month", later["monthly"]["spread"],
+                         "what a follower could act on after publication"))
+    agree = follow_the_money(h, codes, 0, returns, trades, min_net=2)
+    if agree["summary"]:
+        rows.append(_row("Two or more funds on the same side", agree["monthly"]["spread"]))
+    strong = trades[trades["status"].isin(["New", "Exited"])]
+    conviction = follow_the_money(h, codes, 0, returns, strong)
+    if conviction["summary"]:
+        rows.append(_row("New positions and full exits only", conviction["monthly"]["spread"]))
+    for amc, group in funds[funds.index.isin(codes)].groupby("amc"):
+        if len(group) < 2:
+            continue
+        sub = follow_the_money(h, list(group.index), 0, returns, trades[trades["scheme_code"].isin(group.index)])
+        if sub["summary"]:
+            rows.append(_row(f"{amc} funds only ({len(group)})", sub["monthly"]["spread"]))
+    half = len(m) // 2
+    rows.append(_row("First half of the period", m["spread"].iloc[:half],
+                     f"{m['month'].iloc[0]:%b %Y} to {m['month'].iloc[half - 1]:%b %Y}"))
+    rows.append(_row("Second half of the period", m["spread"].iloc[half:],
+                     f"{m['month'].iloc[half]:%b %Y} to {m['month'].iloc[-1]:%b %Y}"))
+    return pd.DataFrame(rows)

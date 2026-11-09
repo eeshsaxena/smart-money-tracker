@@ -16,7 +16,7 @@ python -m smt refresh        # download, validate and store (a few minutes the f
 python -m smt check          # data-quality report
 python -m smt report         # write FINDINGS.md, computed from the data
 python -m smt serve          # dashboard at http://127.0.0.1:8050
-python -m pytest             # 122 offline tests
+python -m pytest             # 124 offline tests
 ```
 
 ## Findings
@@ -25,8 +25,14 @@ python -m pytest             # 122 offline tests
 
 1. **Half of the measured alpha was benchmark choice.** 16 of 19 funds beat the index matching their category over 3 years, by a median 1.7% a year. Measured against the Nifty 50 instead, median alpha is 3.9% rather than 2.2%: a small-cap fund gets credit for the small-cap premium. These are large, surviving, well-known funds, so the beat rate isn't representative of active funds.
 2. **Copying the funds' trades doesn't leave much to capture.** Stocks the funds actively bought beat stocks they sold by 0.76% a month in the following month (t = 1.88, 34 months). That is suggestive, but short of the usual bar for a real effect, and it falls to 0.09% (t = 0.24) a month later, once a follower could act on the published portfolio.
+
+   Repeated on seven other cuts of the data, the gap stays positive in all of them, but nearly all of it came from Nov 2023 – Mar 2025 (+1.45%/month); since then it is +0.06%. Two of the eight cuts cross t = 2, about what chance alone produces when you test that many.
 3. **NAV alone tells a large-cap fund from a small-cap one.** Returns-based style analysis named the largest market-cap segment correctly for all 11 funds whose real portfolios could be checked, with an average error of 8.3 percentage points per segment. That makes it usable for the 9 funds whose AMCs don't publish scriptable holdings.
 4. **The optimiser doesn't beat equal weight out of sample.** Refitted every 6 months on past data only, across 17 funds from 2016, the max-Sharpe mix returned 15.5% a year against 16.0% for equal weight (gap t = −0.22).
+
+![Evidence tab: each fund against the index matching its category](docs/evidence.png)
+
+![Evidence tab: returns of the stocks the funds bought and sold](docs/evidence-flows.png)
 
 ## What it covers
 
@@ -49,6 +55,10 @@ python -m pytest             # 122 offline tests
 | **Overlap** | How much two portfolios overlap, plus a matrix of every pair |
 | **Evidence** | The four findings above, with their charts and tables |
 | **Data status** | Every data-quality check, fund verification, refresh log and source file used |
+
+![Scorecard: each fund against its category index](docs/scorecard.png)
+
+![Holdings: what PPFAS Flexi Cap bought and sold in September 2026](docs/holdings.png)
 
 ## Architecture
 
@@ -147,7 +157,7 @@ smt/
 
 ## Tests
 
-**122 offline tests:**
+**124 offline tests:**
 - **Parser:** SEBI workbooks built in code, in both AMCs' layouts, with sections, arbitrage, REITs, foreign stocks, footnote tables, every date format and percent scale.
 - **Connectors:** link discovery from saved page snippets, including DSP's inconsistent file names and one with no separator before the month.
 - **Analytics:** checked against hand-computed answers, for example:
