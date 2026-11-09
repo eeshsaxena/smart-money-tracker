@@ -98,6 +98,19 @@ def hbar(s: pd.Series, title: str, color: str = ACCENT, suffix: str = "%", heigh
     return _style(fig, title, height=height).update_layout(hovermode="closest", showlegend=False)
 
 
+def diverging_bars(s: pd.Series, title: str) -> go.Figure:
+    """Horizontal bars for a fraction that can be either side of zero."""
+    s = s.sort_values()
+    colors = [POS if v > 0 else NEG for v in s.values]
+    fig = go.Figure(go.Bar(x=s.values, y=s.index, orientation="h", marker_color=colors,
+                           text=[f"{v * 100:+.1f}%" for v in s.values], textposition="outside", cliponaxis=False))
+    lo, hi = (float(s.min()), float(s.max())) if len(s) else (0.0, 0.0)
+    span = max(hi - lo, 0.01)
+    # Room either side for the labels drawn outside the bars.
+    fig.update_xaxes(tickformat=".0%", zeroline=True, range=[min(lo, 0) - 0.15 * span, max(hi, 0) + 0.15 * span])
+    return _style(fig, title, height=max(380, 26 * len(s) + 100)).update_layout(hovermode="closest", showlegend=False)
+
+
 def flows(df: pd.DataFrame, title: str) -> go.Figure:
     d = df.sort_values("net_flow_cr")
     fig = go.Figure(go.Bar(

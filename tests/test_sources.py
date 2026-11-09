@@ -45,6 +45,13 @@ def test_classification_labels_newest_first():
     assert amfi.classification_labels(date(2026, 3, 1), 2) == ["31Dec2025", "30Jun2025"]
 
 
+def test_market_cap_addresses_cover_the_moved_host_and_old_names():
+    assert any("portal.amfiindia.com" in u for u in amfi.market_cap_urls("30Jun2026"))
+    assert any("www.amfiindia.com" in u for u in amfi.market_cap_urls("30Jun2026"))     # both are tried
+    assert amfi.market_cap_urls("30Jun2024") == (amfi.MARKET_CAP_ONE_OFF_URLS["30Jun2024"],)
+    assert amfi.label_date("30Jun2026") == date(2026, 6, 30)
+
+
 def test_parse_market_cap():
     wb = Workbook()
     ws = wb.active

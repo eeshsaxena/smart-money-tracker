@@ -30,7 +30,7 @@ log = logging.getLogger("smt.pipeline")
 class Sources:
     scheme_master: Callable[[], pd.DataFrame] = amfi.fetch_scheme_master
     nav_history: Callable[[str], tuple[str, pd.DataFrame]] = mfapi.fetch_history
-    market_cap: Callable[[], tuple[str, pd.DataFrame]] = amfi.fetch_market_cap
+    market_cap: Callable[[str], pd.DataFrame] = amfi.fetch_market_cap
     connectors: dict[str, Connector] = field(default_factory=default_connectors)
     raw_dir: Path = settings.RAW_DIR      # downloaded disclosure files are kept here
 
@@ -112,15 +112,27 @@ def refresh_nav(con: sqlite3.Connection, src: Sources, report: Report) -> None:
             info["status"], info["message"] = "warning", "; ".join(failed)
 
 
-def refresh_market_cap(con: sqlite3.Connection, src: Sources, report: Report) -> None:
+def refresh_market_cap(con: sqlite3.Connection, src: Sources, report: Report,
+                       months: int = settings.HOLDINGS_MONTHS) -> None:
+    """Load every half-year list covering the holdings window. A published list never changes."""
     with store.job(con, "market_cap") as info:
-        try:
-            label, df = src.market_cap()
-            info["rows"] = store.replace_market_cap(con, df, label)
-            info["message"] = f"AMFI list for six months ended {label}"
-        except Exception as e:  # noqa: BLE001
-            report.errors.append(f"market_cap: {e}")
-            info["status"], info["message"] = "warning", str(e)
+        have = set(store.market_cap_labels(con))
+        loaded, unpublished = [], []
+        for label in amfi.classification_labels(count=months // 6 + 2):
+            if label in have:
+                continue
+            try:
+                info["rows"] += store.replace_market_cap(con, src.market_cap(label), label)
+                loaded.append(label)
+            except LookupError:
+                unpublished.append(label)
+            except Exception as e:  # noqa: BLE001 - keep whatever lists we already have
+                report.errors.append(f"market_cap: {e}")
+                info["status"], info["message"] = "warning", str(e)
+                return
+        info["message"] = (f"loaded {', '.join(loaded) or 'nothing new'}; newest held "
+                           f"{store.market_cap_label(con) or 'none'}"
+                           + (f"; not published: {', '.join(unpublished)}" if unpublished else ""))
 
 
 def refresh_holdings(con: sqlite3.Connection, src: Sources, report: Report,
@@ -128,8 +140,9 @@ def refresh_holdings(con: sqlite3.Connection, src: Sources, report: Report,
     funds = store.funds(con)
     for name, connector in src.connectors.items():
         targets = {
-            universe.normalise(r.expected_name): r.scheme_code
-            for r in funds.itertuples() if r.holdings_source == name
+            universe.normalise(alias): f.scheme_code
+            for f in universe.with_holdings(name) if f.scheme_code in set(funds["scheme_code"])
+            for alias in universe.names_in_disclosures(f)
         }
         if not targets:
             continue
@@ -141,7 +154,8 @@ def refresh_holdings(con: sqlite3.Connection, src: Sources, report: Report,
                 info["status"], info["message"] = "error", f"could not list files: {e}"
                 continue
             wanted_months = sorted({f.as_of for f in files}, reverse=True)[:months]
-            problems = []
+            # A portfolio we can't date would otherwise vanish silently and leave a hole in the history.
+            problems = [f"could not read the month from {n}" for n in connector.unreadable]
             for f in (f for f in files if f.as_of in wanted_months):
                 try:
                     content = cached_download(connector, f, src.raw_dir)
@@ -172,7 +186,7 @@ def refresh(db_path=None, months: int = settings.HOLDINGS_MONTHS, holdings: bool
     try:
         refresh_universe(con, src, report)
         refresh_nav(con, src, report)
-        refresh_market_cap(con, src, report)
+        refresh_market_cap(con, src, report, months)
         if holdings:
             refresh_holdings(con, src, report, months)
     finally:

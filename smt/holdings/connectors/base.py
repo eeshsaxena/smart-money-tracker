@@ -30,6 +30,11 @@ def month_end(year: int, month: int) -> date:
     return date(year, month, calendar.monthrange(year, month)[1])
 
 
+def filename_tokens(name: str) -> list[str]:
+    """Split on any letter/digit boundary, so 'portfolio-31march2026.zip' yields 'march' and '2026'."""
+    return re.findall(r"[a-z]+|\d+", name.lower())
+
+
 def month_year(tokens: list[str]) -> tuple[int, int] | None:
     """Find a month name and a 4-digit year among filename tokens."""
     month = next((MONTHS[t.lower()] for t in tokens if t.lower() in MONTHS), None)
@@ -60,6 +65,7 @@ class Connector:
 
     name = "base"
     page_url = ""
+    unreadable: tuple[str, ...] = ()   # files that look like portfolios but whose month couldn't be read
 
     def discover(self, html: str | None = None) -> list[DisclosureFile]:
         """List available disclosure files, newest first. `html` lets tests skip the network."""

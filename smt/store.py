@@ -16,6 +16,7 @@ from pathlib import Path
 import pandas as pd
 
 from smt import settings
+from smt.sources.amfi import label_date
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS funds (
@@ -33,8 +34,10 @@ CREATE TABLE IF NOT EXISTS nav (
     scheme_code TEXT NOT NULL, date TEXT NOT NULL, nav REAL NOT NULL,
     PRIMARY KEY (scheme_code, date)
 );
-CREATE TABLE IF NOT EXISTS market_cap (
-    isin TEXT PRIMARY KEY, company TEXT, nse_symbol TEXT, cap_class TEXT NOT NULL, label TEXT NOT NULL
+DROP TABLE IF EXISTS market_cap;        -- replaced by one list per half-year
+CREATE TABLE IF NOT EXISTS market_cap_lists (
+    label TEXT NOT NULL, isin TEXT NOT NULL, company TEXT, nse_symbol TEXT, cap_class TEXT NOT NULL,
+    PRIMARY KEY (label, isin)
 );
 CREATE TABLE IF NOT EXISTS holdings (
     scheme_code TEXT NOT NULL, as_of TEXT NOT NULL, isin TEXT NOT NULL, asset_class TEXT NOT NULL,
@@ -93,10 +96,10 @@ def replace_nav(con: sqlite3.Connection, scheme_code: str, df: pd.DataFrame) -> 
 
 def replace_market_cap(con: sqlite3.Connection, df: pd.DataFrame, label: str) -> int:
     with con:
-        con.execute("DELETE FROM market_cap")
+        con.execute("DELETE FROM market_cap_lists WHERE label = ?", (label,))
         con.executemany(
-            "INSERT INTO market_cap VALUES (?,?,?,?,?)",
-            [(r.isin, r.company, r.nse_symbol, r.cap_class, label) for r in df.itertuples()],
+            "INSERT INTO market_cap_lists VALUES (?,?,?,?,?)",
+            [(label, r.isin, r.company, r.nse_symbol, r.cap_class) for r in df.itertuples()],
         )
     return len(df)
 
@@ -163,27 +166,60 @@ def nav_wide(con: sqlite3.Connection, codes: list[str] | None = None) -> pd.Data
     return df.pivot(index="date", columns="scheme_code", values="nav").sort_index()
 
 
+def market_cap_labels(con: sqlite3.Connection) -> list[str]:
+    """Half-year lists held, newest first."""
+    labels = [r[0] for r in con.execute("SELECT DISTINCT label FROM market_cap_lists")]
+    return sorted(labels, key=label_date, reverse=True)
+
+
+def list_in_force(as_of: pd.Timestamp, labels: list[str]) -> str | None:
+    """The list a portfolio dated `as_of` is judged against: the newest half-year ended before that date.
+
+    Older portfolios fall back to the oldest list held. Using today's list for a 2023
+    portfolio would class stocks by what they became, not by what they were then.
+    """
+    if not labels:
+        return None
+    day = as_of.date()
+    return next((x for x in labels if label_date(x) < day), labels[-1])
+
+
+def _classifier(lists: pd.DataFrame) -> tuple[dict, dict]:
+    """Exact ISIN map, plus a 9-character prefix map for prefixes naming exactly one company."""
+    exact = {r.isin: (r.cap_class, r.nse_symbol) for r in lists.itertuples()}
+    prefix = lists["isin"].str[:9]
+    unique = lists[~prefix.duplicated(keep=False)]
+    return exact, {r.isin[:9]: (r.cap_class, r.nse_symbol) for r in unique.itertuples()}
+
+
 def holdings(con: sqlite3.Connection, codes: list[str] | None = None) -> pd.DataFrame:
-    """Holdings with AMFI's market-cap class attached.
+    """Holdings with AMFI's market-cap class as of each portfolio's date.
 
     A stock split or bonus issue gives a company a new ISIN, so a stock can be
     missing from an older AMFI list under its new ISIN. The first 9 characters
     (country, issuer, security type) stay the same, so those are the fallback key
-    when they identify exactly one company in the list.
+    for equity when they identify exactly one company in the list.
     """
-    sql = """SELECT h.*, COALESCE(m.cap_class, p.cap_class) AS cap_class,
-                    COALESCE(m.nse_symbol, p.nse_symbol) AS nse_symbol
-             FROM holdings h
-             LEFT JOIN market_cap m ON m.isin = h.isin
-             LEFT JOIN (SELECT substr(isin, 1, 9) AS prefix, MAX(cap_class) AS cap_class,
-                               MAX(nse_symbol) AS nse_symbol
-                        FROM market_cap GROUP BY prefix HAVING COUNT(*) = 1) p
-                    ON p.prefix = substr(h.isin, 1, 9) AND h.asset_class LIKE 'Equity%'"""
-    params: tuple = ()
+    sql, params = "SELECT * FROM holdings", ()
     if codes:
-        sql += f" WHERE h.scheme_code IN ({','.join('?' * len(codes))})"
+        sql += f" WHERE scheme_code IN ({','.join('?' * len(codes))})"
         params = tuple(codes)
     df = pd.read_sql_query(sql, con, params=params, parse_dates=["as_of"])
+    df["cap_class"] = None
+    df["nse_symbol"] = None
+    labels = market_cap_labels(con)
+    if df.empty or not labels:
+        return df
+    lists = pd.read_sql_query("SELECT label, isin, nse_symbol, cap_class FROM market_cap_lists", con)
+    maps = {label: _classifier(g) for label, g in lists.groupby("label")}
+    in_force = {d: list_in_force(d, labels) for d in df["as_of"].unique()}
+    caps, symbols = [], []
+    for r in df[["as_of", "isin", "asset_class"]].itertuples(index=False):
+        exact, prefix = maps[in_force[r.as_of]]
+        hit = exact.get(r.isin) or (prefix.get(r.isin[:9]) if r.asset_class.startswith("Equity") else None)
+        caps.append(hit[0] if hit else None)
+        symbols.append(hit[1] if hit else None)
+    df["cap_class"], df["nse_symbol"] = caps, symbols
     return df
 
 
@@ -199,5 +235,5 @@ def disclosure_files(con: sqlite3.Connection) -> pd.DataFrame:
 
 
 def market_cap_label(con: sqlite3.Connection) -> str | None:
-    row = con.execute("SELECT label FROM market_cap LIMIT 1").fetchone()
-    return row[0] if row else None
+    labels = market_cap_labels(con)
+    return labels[0] if labels else None

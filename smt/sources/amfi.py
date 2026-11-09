@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import io
 import re
-from datetime import date
+from datetime import date, datetime
 
 import pandas as pd
 import requests
@@ -16,7 +16,22 @@ import requests
 from smt import http
 
 NAV_ALL_URL = "https://portal.amfiindia.com/spages/NAVAll.txt"
-MARKET_CAP_URL = "https://www.amfiindia.com/Themes/Theme1/downloads/AverageMarketCapitalization{label}.xlsx"
+# AMFI moved its newest list to the portal host in 2026, and older lists have one-off names
+# (all taken from amfiindia.com/otherdata/categorisation-of-stocks, which is rendered by script).
+MARKET_CAP_URLS = (
+    "https://portal.amfiindia.com/spages/AverageMarketCapitalization{label}.xlsx",
+    "https://www.amfiindia.com/Themes/Theme1/downloads/AverageMarketCapitalization{label}.xlsx",
+)
+_OLD_LIST = ("https://www.amfiindia.com/Themes/Theme1/downloads/"
+             "AverageMarketCapitalizationoflistedcompaniesduringthesixmonthsended{label}.xlsx")
+MARKET_CAP_ONE_OFF_URLS = {
+    "31Dec2024": _OLD_LIST.format(label="31Dec2024"),
+    "30Jun2024": "https://www.amfiindia.com/uploads/Average_Market_Capitalization_30_Jun2024_2a1ab4c1d8.xlsx",
+    "31Dec2023": _OLD_LIST.format(label="31Dec2023"),
+    "30Jun2023": _OLD_LIST.format(label="30Jun2023"),
+    "31Dec2022": _OLD_LIST.format(label="31Dec2022"),
+    "30Jun2022": _OLD_LIST.format(label="30June2022"),
+}
 
 _CATEGORY_RE = re.compile(r"^(Open|Close|Interval) Ended Schemes\s*\((.+)\)\s*$", re.I)
 
@@ -108,17 +123,34 @@ def parse_market_cap(xlsx: bytes) -> pd.DataFrame:
     return out.drop_duplicates("isin").reset_index(drop=True)
 
 
-def fetch_market_cap() -> tuple[str, pd.DataFrame]:
-    """Download the newest classification AMFI has published. Returns (label, table)."""
-    for label in classification_labels():
+def label_date(label: str) -> date:
+    """'30Jun2026' -> the last day of the half-year that list covers."""
+    return datetime.strptime(label, "%d%b%Y").date()
+
+
+def market_cap_urls(label: str) -> tuple[str, ...]:
+    if label in MARKET_CAP_ONE_OFF_URLS:
+        return (MARKET_CAP_ONE_OFF_URLS[label],)
+    return tuple(u.format(label=label) for u in MARKET_CAP_URLS)
+
+
+def fetch_market_cap(label: str) -> pd.DataFrame:
+    """Download one half-year's list.
+
+    Raises LookupError if AMFI has not published it at any known address, and
+    RuntimeError if the site itself can't be reached.
+    """
+    unreachable = None
+    for url in market_cap_urls(label):
         try:
-            resp = http.get(MARKET_CAP_URL.format(label=label))
+            resp = http.get(url)
         except requests.HTTPError:
-            continue                        # not published for this half-year: try the previous one
+            continue                        # not at this address
         except requests.RequestException as e:
-            # The host itself is unreachable; trying older names would only wait longer.
-            raise RuntimeError(f"AMFI website unreachable: {type(e).__name__}") from e
-        if resp.content[:2] != b"PK":       # AMFI answers missing files with an HTML page
+            unreachable = e
             continue
-        return label, parse_market_cap(resp.content)
-    raise RuntimeError("No AMFI market-cap classification found for the last three years")
+        if resp.content[:2] == b"PK":       # AMFI answers missing files with an HTML page
+            return parse_market_cap(resp.content)
+    if unreachable is not None:
+        raise RuntimeError(f"AMFI website unreachable: {type(unreachable).__name__}") from unreachable
+    raise LookupError(f"AMFI has no market-cap list for {label}")

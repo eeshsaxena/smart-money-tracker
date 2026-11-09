@@ -3,10 +3,12 @@ from __future__ import annotations
 
 import json
 
+import pandas as pd
 import pytest
 
-from smt import pipeline, universe
+from smt import pipeline, report, universe
 from smt.dashboard.app import create_app
+from smt.dashboard.data import Data, short_category
 
 
 @pytest.fixture
@@ -24,6 +26,7 @@ INPUTS = {
     "hold-fund.value": "122639", "hold-month.value": "2026-09-30",
     "flow-month.value": "2026-09-30",
     "ov-a.value": "122639", "ov-b.value": "119076",
+    "tabs.active_tab": "evidence",
 }
 
 
@@ -45,13 +48,13 @@ def test_layout_serves(app):
     client = app.server.test_client()
     assert client.get("/").status_code == 200
     layout = json.dumps(client.get("/_dash-layout").get_json())
-    for tab in ("Scorecard", "Holdings", "Smart money", "Data status"):
+    for tab in ("Scorecard", "Holdings", "Smart money", "Evidence", "Data status"):
         assert tab in layout
 
 
 def test_every_callback_runs_without_error(app):
     app.server.test_client().get("/")
-    assert len(app.callback_map) == 8
+    assert len(app.callback_map) == 9
     for key, spec in app.callback_map.items():
         resp = call(app, key, spec)
         assert resp.status_code == 200, f"{key}: {resp.data[:500]}"
@@ -63,3 +66,26 @@ def test_empty_database_shows_instructions(tmp_path):
     app = create_app(tmp_path / "empty.db")
     layout = json.dumps(app.server.test_client().get("/_dash-layout").get_json())
     assert "smt refresh" in layout
+
+
+def test_category_labels_are_cleaned_up():
+    assert short_category("Equity Scheme - Mid Cap Fund") == "Mid Cap"
+    assert short_category("Other Scheme - Index Funds") == "Index"
+    # AMFI files ELSS funds under two spellings; they must rank together.
+    assert short_category("Equity Scheme - ELSS") == short_category("Equity Schemes - ELSS- Tax Saver Fund") == "ELSS"
+
+
+def test_scorecard_compares_each_fund_with_its_category_index(tmp_path, fake_sources):
+    db = tmp_path / "smt.db"
+    pipeline.refresh(db, months=2, src=fake_sources)
+    score = Data.load(db).scorecard()
+    assert universe.CASH_PROXY not in set(score["code"])          # cash isn't a fund to rank
+    row = score.set_index("code").loc["122639"]
+    assert row["Compared with"] == "Nifty 500" and pd.notna(row["3Y vs index"])
+
+
+def test_report_is_written_from_the_data(tmp_path, fake_sources):
+    db = tmp_path / "smt.db"
+    pipeline.refresh(db, months=2, src=fake_sources)
+    text = report.write(Data.load(db), tmp_path / "FINDINGS.md").read_text(encoding="utf-8")
+    assert "Do these funds beat the right index?" in text and "Does the optimiser beat equal weight?" in text
