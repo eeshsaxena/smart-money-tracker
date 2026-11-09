@@ -21,5 +21,6 @@ USER_AGENT = os.getenv(
     "Chrome/124.0 Safari/537.36",
 )
 
-# How many month-end portfolio disclosures to keep per fund.
-HOLDINGS_MONTHS = int(os.getenv("SMT_HOLDINGS_MONTHS", "6"))
+# How many month-end portfolio disclosures to load per AMC. Testing whether buying and
+# selling predicts returns needs years of history, not months.
+HOLDINGS_MONTHS = int(os.getenv("SMT_HOLDINGS_MONTHS", "36"))

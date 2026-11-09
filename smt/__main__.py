@@ -1,7 +1,8 @@
 """Command line:
 
-    python -m smt refresh [--months 6] [--no-holdings]   download + validate + store
+    python -m smt refresh [--months 36] [--no-holdings]  download + validate + store
     python -m smt check                                  data-quality report (exit 1 on failure)
+    python -m smt report [--out FINDINGS.md]             write the findings, computed from the data
     python -m smt serve [--port 8050]                    run the dashboard
 """
 from __future__ import annotations
@@ -22,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--months", type=int, default=settings.HOLDINGS_MONTHS, help="month-end portfolios to keep")
     r.add_argument("--no-holdings", action="store_true", help="skip portfolio disclosures")
     sub.add_parser("check", help="run data-quality checks")
+    rp = sub.add_parser("report", help="write the findings, computed from the data")
+    rp.add_argument("--out", default=str(settings.ROOT / "FINDINGS.md"))
     s = sub.add_parser("serve", help="run the dashboard")
     s.add_argument("--port", type=int, default=int(os.getenv("PORT", "8050")))
     s.add_argument("--host", default=os.getenv("HOST", "127.0.0.1"))
@@ -48,8 +51,18 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[{row.status.upper():4}] {row.check}: {row.detail}")
         return 1 if (df["status"] == "fail").any() else 0
 
+    if args.cmd == "report":
+        from smt import report
+        from smt.dashboard.data import Data
+        data = Data.load(args.db)
+        if data.empty:
+            print("No data yet. Run:  python -m smt refresh", file=sys.stderr)
+            return 1
+        print(f"Wrote {report.write(data, args.out)}")
+        return 0
+
     from smt.dashboard.app import create_app  # imported late: Dash is heavy
-    create_app(args.db).run(host=args.host, port=args.port, debug=False)
+    create_app(args.db, warm=True).run(host=args.host, port=args.port, debug=False)
     return 0
 
 

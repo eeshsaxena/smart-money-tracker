@@ -12,5 +12,5 @@ COPY . .
 EXPOSE 8050
 # Refresh the data on start, then serve. If a source is down the refresh logs a
 # warning and the app serves whatever data it already has.
-CMD python -m smt refresh --months 6 || true; \
+CMD python -m smt refresh || true; \
     exec gunicorn "smt.dashboard.app:server" --bind 0.0.0.0:$PORT --workers 2 --timeout 120

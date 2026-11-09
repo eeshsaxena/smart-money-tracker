@@ -1,0 +1,184 @@
+"""Writes FINDINGS.md from the data, so no number in it was typed by hand: `python -m smt report`.
+
+The sentences here also head the dashboard's Evidence tab, and each one decides what it can
+say from the numbers it's given. A refresh that changes a result changes the wording too.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+
+INDEX_CAVEAT = (
+    "These are funds picked for being large and well known, and every one still exists, so this group "
+    "is not a fair sample of active funds. Its beat rate says little about active management in general. "
+    "Rolling windows overlap heavily, so they aren't independent observations. Index funds launched in "
+    "2019-2021 set how far back the comparison can go.")
+FLOW_CAVEAT = (
+    "Equal-weighted baskets from 11 funds at 2 AMCs, whose decisions aren't independent. Prices come from "
+    "the disclosures, so a stock every tracked fund sold out of has no next price and drops from the sold "
+    "basket. Portfolios are published about 10 days after month-end, so a follower can't earn all of the "
+    "next-month return. Costs and taxes are ignored.")
+STYLE_CAVEAT = (
+    "The estimate leans towards large caps and can't see foreign holdings, which it tends to read as cash. "
+    "Use it to tell a large-cap-like fund from a small-cap-like one, not as a substitute for the portfolio.")
+OPTIMISER_CAVEAT = (
+    "The funds were chosen today, so the whole test benefits from hindsight about which funds survived and "
+    "grew. It compares methods on that same group; it doesn't say what any of them will return. Costs of "
+    "rebalancing and taxes are ignored, which flatters the optimiser because it trades more.")
+
+
+def _p(x: float, digits: int = 1, signed: bool = False) -> str:
+    return f"{x * 100:{'+' if signed else ''}.{digits}f}%"
+
+
+def index_sentence(s: dict) -> str:
+    gap = s["median_alpha_vs_nifty50"] - s["median_alpha"]
+    return (f"{s['beat_3y']} of {s['funds_3y']} funds beat the index matching their category over 3 years, "
+            f"by a median {_p(s['median_active_3y'])} a year. Measuring against the Nifty 50 instead would "
+            f"overstate median alpha, {_p(s['median_alpha_vs_nifty50'])} against {_p(s['median_alpha'])}: "
+            f"{_p(gap)} a year was market segment, not manager skill.")
+
+
+def flow_sentence(s: dict, later: dict) -> str:
+    significant = abs(s["spread_t"]) >= 2
+    first = (f"Stocks the funds bought returned {_p(s['spread'], 2, signed=True)} a month against stocks they "
+             f"sold over the next month (t = {s['spread_t']:.2f}, {s['months']} months), "
+             + ("a statistically clear difference." if significant else
+                "suggestive, but short of the usual t = 2 bar for a real effect."))
+    if not later:
+        return first
+    faded = abs(later["spread_t"]) < 2
+    second = (f" One month later the gap is {_p(later['spread'], 2, signed=True)} (t = {later['spread_t']:.2f})"
+              + (", so anyone acting on the published portfolios finds little left to capture."
+                 if faded else ", so the signal lasts long enough for a follower to use."))
+    return first + second
+
+
+def robustness_sentence(r: pd.DataFrame) -> str:
+    """What the other cuts of the data say, worded from the table itself."""
+    if r.empty:
+        return ""
+    same_month = r[r["variant"] != "Waiting one more month"]
+    positive = int((same_month["spread"] > 0).sum())
+    clear = same_month[same_month["t"].abs() >= 2]
+    text = (f"Repeated on {len(same_month)} other cuts of the same data, the gap is positive in {positive} and "
+            f"reaches t = 2 in {len(clear)}"
+            + (f" ({', '.join(clear['variant'].str.lower())})" if len(clear) else "")
+            + ". With this many cuts, one or two crossing t = 2 by chance is expected.")
+    halves = r.set_index("variant")
+    if {"First half of the period", "Second half of the period"} <= set(halves.index):
+        a, b = halves.loc["First half of the period"], halves.loc["Second half of the period"]
+        if abs(a["spread"] - b["spread"]) > 0.005:
+            early, late = (a, b) if a["spread"] > b["spread"] else (b, a)
+            text += (f" Most of it came from {early['note']} ({_p(early['spread'], 2, signed=True)} a month), "
+                     f"against {_p(late['spread'], 2, signed=True)} from {late['note']}.")
+    return text
+
+
+def style_sentence(st: dict) -> str:
+    e = st["errors"]
+    return (f"From NAV alone, the estimate named the largest market-cap segment correctly for "
+            f"{st['dominant_right']} of {st['validated']} funds whose real portfolios could be checked. "
+            f"Its average error was {e['overall']:.1f} percentage points per segment "
+            f"({e['Large Cap']:.1f} large, {e['Mid Cap']:.1f} mid, {e['Small Cap']:.1f} small).")
+
+
+def optimiser_sentence(o: dict) -> str:
+    s = o["summary"]
+    sharpe, equal = s.loc["Max Sharpe", "return"], s.loc["Equal weight", "return"]
+    verdict = ("No evidence it beats simply splitting money equally" if abs(o["gap_t"]) < 2 else
+               ("It beat equal weight" if o["gap_vs_equal"] > 0 else "It lost to equal weight"))
+    return (f"Fitted only on past data and refitted every 6 months across {len(o['funds'])} funds, "
+            f"the max-Sharpe portfolio returned {_p(sharpe)} a year against {_p(equal)} for equal weight "
+            f"(gap t = {o['gap_t']:.2f}). {verdict}.")
+
+
+def _table(df: pd.DataFrame) -> str:
+    head = "| " + " | ".join(df.columns) + " |\n|" + "---|" * len(df.columns)
+    rows = ["| " + " | ".join(str(v) for v in r) + " |" for r in df.itertuples(index=False)]
+    return "\n".join([head, *rows])
+
+
+def _fmt(x, f) -> str:
+    return "–" if x is None or pd.isna(x) else f(x)
+
+
+def build(evidence: dict, nav_date, holdings_date, n_funds: int) -> str:
+    out = ["# Findings", "",
+           f"Generated by `python -m smt report` from NAVs up to {nav_date} and portfolios up to {holdings_date}, "
+           f"across {n_funds} funds. Nothing here is typed by hand, and none of it is investment advice.", ""]
+
+    s, t = evidence["index_summary"], evidence["index_table"]
+    if s:
+        view = pd.DataFrame({
+            "Fund": t["fund"], "Compared with": t["index"].str.split(" (", regex=False).str[0],
+            "3Y return": t["return_3y"].map(lambda x: _fmt(x, _p)),
+            "Index": t["index_3y"].map(lambda x: _fmt(x, _p)),
+            "Ahead": t["active_3y"].map(lambda x: _fmt(x, lambda v: _p(v, signed=True))),
+            "Beat index, 3Y windows": t["hit_rate"].map(lambda x: _fmt(x, lambda v: _p(v, 0))),
+            "Info ratio": t["information_ratio"].map(lambda x: _fmt(x, "{:.2f}".format)),
+        })
+        out += ["## 1. Do these funds beat the right index?", "", index_sentence(s), "", _table(view), "",
+                f"*{INDEX_CAVEAT}*", ""]
+
+    fl = evidence["flows"]
+    s1, s2 = fl["next_month"].get("summary") or {}, fl["after_a_month"].get("summary") or {}
+    if s1:
+        rows = pd.DataFrame([
+            {"Measured over": name, "Months": x["months"], "Bought": _p(x["bought"], 2), "Sold": _p(x["sold"], 2),
+             "All held": _p(x["held"], 2), "Bought minus sold": _p(x["spread"], 2, signed=True),
+             "t": f"{x['spread_t']:.2f}", "Months bought won": _p(x["spread_hit_rate"], 0)}
+            for name, x in (("Next month", s1), ("One month later", s2)) if x])
+        out += ["## 2. Does following the money work?", "", flow_sentence(s1, s2), "", _table(rows), "",
+                f"Based on {fl['trades']:,} active trades from {s1['first'].date()} to {s1['last'].date()}. "
+                f"{_p(s1['coverage_sold'], 0)} of sold stocks had a next-month price.", ""]
+        r = fl.get("robustness", pd.DataFrame())
+        if not r.empty:
+            view = pd.DataFrame({
+                "Variant": r["variant"], "Months": r["months"],
+                "Bought minus sold": r["spread"].map(lambda v: _p(v, 2, signed=True)),
+                "t": r["t"].map("{:.2f}".format),
+                "95% interval": [f"{_p(lo, 2, signed=True)} to {_p(hi, 2, signed=True)}"
+                                 for lo, hi in zip(r["ci_low"], r["ci_high"], strict=True)],
+                "Note": r["note"]})
+            out += ["**Does it hold up?** " + robustness_sentence(r), "", _table(view), ""]
+        out += [f"*{FLOW_CAVEAT}*", ""]
+
+    st = evidence["style"]
+    if not st["validation"].empty:
+        v = st["validation"]
+        view = pd.DataFrame({"Fund": v["fund"], "R²": v["r_squared"].map("{:.2f}".format)})
+        for c in ("Large Cap", "Mid Cap", "Small Cap"):
+            view[c.split()[0] + " est / actual"] = (v[f"est {c}"].map("{:.0f}".format) + " / "
+                                                    + v[f"actual {c}"].map("{:.0f}".format))
+        out += ["## 3. Can NAV alone reveal a fund's style?", "", style_sentence(st), "", _table(view), ""]
+        if not st["nav_only"].empty:
+            only = st["nav_only"].copy()
+            for c in only.columns:
+                if c == "r_squared":
+                    only[c] = only[c].map("{:.2f}".format)
+                elif c != "fund":
+                    only[c] = only[c].map("{:.0f}".format)
+            only = only.rename(columns={"fund": "Fund (no usable disclosure)", "r_squared": "R²"})
+            out += [_table(only), ""]
+        out += [f"*{STYLE_CAVEAT}*", ""]
+
+    o = evidence["optimiser"]
+    if o:
+        tab = o["summary"].reset_index().rename(columns={"index": "Portfolio"})
+        view = pd.DataFrame({"Portfolio": tab["Portfolio"], "Return": tab["return"].map(_p),
+                             "Volatility": tab["volatility"].map(_p), "Sharpe": tab["sharpe"].map("{:.2f}".format),
+                             "Worst fall": tab["max_drawdown"].map(_p)})
+        out += ["## 4. Does the optimiser beat equal weight?", "", optimiser_sentence(o), "", _table(view), "",
+                f"Tested from {o['start'].date()} to {o['end'].date()}, with {o['periods']} refits and "
+                f"{_p(o['turnover'], 0)} average turnover per refit.", "", f"*{OPTIMISER_CAVEAT}*", ""]
+    return "\n".join(out)
+
+
+def write(data, path: Path | str) -> Path:
+    path = Path(path)
+    nav_date = data.nav.index.max().date()
+    holdings_date = data.holdings["as_of"].max().date() if not data.holdings.empty else "none"
+    path.write_text(build(data.evidence, nav_date, holdings_date, len(data.active_codes)), encoding="utf-8")
+    return path

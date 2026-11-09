@@ -6,7 +6,7 @@ services:
     region: singapore
     # Data is downloaded and validated at build time, so every deploy ships fresh data
     # and the web process never waits on AMFI or an AMC website.
-    buildCommand: pip install -r requirements.txt && python -m smt refresh --months 6
+    buildCommand: pip install -r requirements.txt && python -m smt refresh
     startCommand: gunicorn "smt.dashboard.app:server" --bind 0.0.0.0:$PORT --workers 2 --timeout 120
     healthCheckPath: /
     envVars:

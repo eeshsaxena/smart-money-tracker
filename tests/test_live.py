@@ -36,6 +36,7 @@ def test_connector_finds_and_parses_latest_month(name):
     connector = default_connectors()[name]
     files = connector.discover()
     assert files, "no files found on the disclosure page"
+    assert not connector.unreadable, connector.unreadable
     targets = {universe.normalise(f.expected_name) for f in universe.with_holdings(name)}
     latest = [f for f in files if f.as_of == files[0].as_of]
     found = set()
@@ -45,5 +46,10 @@ def test_connector_finds_and_parses_latest_month(name):
 
 
 def test_market_cap_list_available():
-    label, df = amfi.fetch_market_cap()
+    # The newest half-year may not be out yet just after a period ends, so accept either of the latest two.
+    labels = amfi.classification_labels(count=2)
+    try:
+        df = amfi.fetch_market_cap(labels[0])
+    except LookupError:
+        df = amfi.fetch_market_cap(labels[1])
     assert df["cap_class"].value_counts()["Large Cap"] == 100

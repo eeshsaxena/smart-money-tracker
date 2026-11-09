@@ -11,9 +11,29 @@ def test_scheme_codes_are_unique():
     assert len(codes) == len(set(codes))       # the old config reused codes for different funds
 
 
-def test_exactly_one_benchmark():
-    assert sum(f.is_benchmark for f in universe.FUNDS) == 1
-    assert universe.by_code(universe.BENCHMARK_CODE).is_benchmark
+def test_reference_series_are_flagged_and_labelled():
+    for code in (universe.BENCHMARK_CODE, universe.CASH_PROXY, *universe.STYLE_FACTORS.values()):
+        fund = universe.by_code(code)
+        assert fund.is_benchmark and fund.label
+
+
+@pytest.mark.parametrize("category,code", [
+    ("Equity Scheme - Large Cap Fund", universe.NIFTY_100),
+    ("Equity Scheme - Large & Mid Cap Fund", universe.LARGEMID_250),   # must not be caught by "Mid Cap"
+    ("Equity Scheme - Mid Cap Fund", universe.MIDCAP_150),
+    ("Equity Scheme - Small Cap Fund", universe.SMALLCAP_250),
+    ("Equity Scheme - Flexi Cap Fund", universe.NIFTY_500),
+    ("Equity Scheme - ELSS", universe.NIFTY_500),
+    (None, universe.NIFTY_500),
+])
+def test_each_category_is_judged_against_its_own_index(category, code):
+    assert universe.category_index(category) == code
+    assert universe.by_code(code).is_benchmark
+
+
+def test_renamed_funds_can_be_found_under_their_old_names():
+    names = universe.names_in_disclosures(universe.by_code("119250"))
+    assert names[0] == "DSP Large Cap Fund" and "DSP Top 100 Equity Fund" in names
 
 
 @pytest.mark.parametrize("a,b", [

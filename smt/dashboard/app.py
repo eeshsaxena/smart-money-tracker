@@ -5,68 +5,33 @@ from pathlib import Path
 
 import dash_bootstrap_components as dbc
 import pandas as pd
-from dash import Dash, Input, Output, dash_table, dcc, html
-from dash.dash_table.Format import Format, Scheme
+from dash import Dash, Input, Output, dcc, html, no_update
 
 from smt import universe
+from smt.analytics import evidence as evidence_mod
 from smt.analytics import holdings as H
 from smt.analytics import performance as perf
 from smt.analytics import portfolio as pf
 from smt.analytics import sip as sip_mod
+from smt.analytics import style as style_mod
+from smt.dashboard import evidence_view
 from smt.dashboard import figures as fig
+from smt.dashboard.components import NUM0, NUM1, NUM2, PCT, PCT0, kpi, note, pct, section, table
 from smt.dashboard.data import Data
 
-PCT = Format(precision=1, scheme=Scheme.percentage)
-NUM2 = Format(precision=2, scheme=Scheme.fixed)
-NUM1 = Format(precision=1, scheme=Scheme.fixed)
-NUM0 = Format(precision=0, scheme=Scheme.fixed).group(True)
 PERIODS = {"1Y": 1, "3Y": 3, "5Y": 5, "Max": None}
-
-
-# --------------------------------------------------------------------------- #
-# Small layout helpers
-# --------------------------------------------------------------------------- #
-def kpi(label: str, value: str, sub: str = "") -> dbc.Col:
-    return dbc.Col(dbc.Card(dbc.CardBody([
-        html.Div(label, className="text-muted small"),
-        html.Div(value, className="fs-4 fw-semibold"),
-        html.Div(sub, className="small text-muted"),
-    ])), xs=6, md=3, className="mb-3")
-
-
-def pct(v, digits: int = 1) -> str:
-    return "–" if v is None or pd.isna(v) else f"{v * 100:.{digits}f}%"
-
-
-def table(df: pd.DataFrame, id_: str | None = None, formats: dict | None = None, page_size: int = 15,
-          **kw) -> dash_table.DataTable:
-    formats = formats or {}
-    cols = [{"name": c, "id": c, "type": "numeric" if c in formats else "text",
-             **({"format": formats[c]} if c in formats else {})} for c in df.columns]
-    return dash_table.DataTable(
-        id=id_ or f"t{id(df)}", data=df.to_dict("records"), columns=cols, page_size=page_size,
-        sort_action="native", style_table={"overflowX": "auto"},
-        style_cell={"fontFamily": "system-ui, -apple-system, 'Segoe UI', sans-serif", "fontSize": 13,
-                    "padding": "6px 10px", "textAlign": "left",
-                    "maxWidth": 320, "whiteSpace": "normal"},
-        style_header={"fontWeight": 600, "backgroundColor": "#f1f5f9"}, **kw)
-
-
-def note(text: str) -> html.P:
-    return html.P(text, className="text-muted small mb-2")
-
-
-def section(title: str, *children) -> html.Div:
-    return html.Div([html.H5(title, className="mt-4 mb-2"), *children])
 
 
 # --------------------------------------------------------------------------- #
 # App
 # --------------------------------------------------------------------------- #
-def create_app(db_path: Path | str | None = None) -> Dash:
+def create_app(db_path: Path | str | None = None, warm: bool = False) -> Dash:
+    """Build the app. `warm=True` (serving) computes the Evidence tab in the background straight away."""
     data = Data.load(db_path)
     app = Dash(__name__, external_stylesheets=[dbc.themes.FLATLY], title="Smart Money Tracker",
                suppress_callback_exceptions=True)
+    if warm and not data.empty:
+        data.warm()
 
     if data.empty:
         app.layout = dbc.Container([html.H2("Smart Money Tracker", className="mt-4"),
@@ -86,7 +51,7 @@ def create_app(db_path: Path | str | None = None) -> Dash:
 
     header = dbc.Row([
         dbc.Col([html.H2("Smart Money Tracker", className="mb-0"),
-                 html.Div(f"{len(funds) - 1} Indian equity mutual funds, verified against AMFI. "
+                 html.Div(f"{len(data.active_codes)} Indian equity mutual funds, verified against AMFI. "
                           f"NAV as of {nav_date}"
                           + (f"; portfolios as of {latest_holdings}" if latest_holdings else "") + ".",
                           className="text-muted")], md=9),
@@ -94,11 +59,19 @@ def create_app(db_path: Path | str | None = None) -> Dash:
 
     # ---------------------------------------------------------------- tabs
     t_score = dbc.Tab(label="Scorecard", tab_id="score", children=[
-        note("Returns over 1 year are annualised. Risk figures use the last 3 years of daily NAVs; "
-             f"benchmark is the {universe.BENCHMARK_NAME}. Rank is within this app's funds of the same SEBI category."),
+        note("Returns over 1 year are annualised. Each fund is compared with the index fund matching its SEBI "
+             "category, not the Nifty 50: a small-cap fund should have to beat small caps. Alpha, beta and information "
+             "ratio use 3 years of weekly returns. 'Beat index' is the share of all 3-year holding periods the fund "
+             "came out ahead. Rank is within this app's funds of the same category."),
         dcc.Dropdown(id="score-cat", multi=True, placeholder="Filter by category",
                      options=sorted(score["Category"].unique())),
         html.Div(id="score-table", className="mt-3"),
+    ])
+
+    t_evidence = dbc.Tab(label="Evidence", tab_id="evidence", children=[
+        note("Four things an app like this implies, tested on its own data. Computed in the background when the "
+             "app starts; if you open this tab before that finishes, it shows when ready."),
+        dcc.Loading(html.Div(id="evidence-body"), type="circle"),
     ])
 
     t_fund = dbc.Tab(label="Fund", tab_id="fund", children=[
@@ -138,8 +111,8 @@ def create_app(db_path: Path | str | None = None) -> Dash:
 
     t_hold = dbc.Tab(label="Holdings", tab_id="hold", children=[
         note("From each AMC's official month-end portfolio disclosure. 'Equity' means Indian stocks held outright; "
-             "arbitrage positions (hedged with futures) are shown separately. Market-cap classes are AMFI's list"
-             f" for the six months ended {data.market_cap_label or 'n/a'}."),
+             "arbitrage positions (hedged with futures) are shown separately. Market-cap classes come from AMFI's "
+             f"half-yearly list in force at each portfolio's date (newest: {data.market_cap_label or 'n/a'})."),
         dbc.Row([
             dbc.Col(dcc.Dropdown(id="hold-fund", options=hopts, value=hcodes[0] if hcodes else None,
                                  clearable=False), md=6),
@@ -151,14 +124,17 @@ def create_app(db_path: Path | str | None = None) -> Dash:
         section("Top holdings", html.Div(id="hold-top")),
         section("What changed since the previous month",
                 note("Classified by number of shares, so price moves alone never count as buying or selling. "
-                     "A share count that doubles while the weight stays flat is flagged as a likely split or bonus."),
+                     "Earlier share counts are restated for bonuses and splits, and shares received in a demerger "
+                     "are marked as a spin-off, not a purchase."),
                 html.Div(id="hold-changes")),
         section("Style drift", dcc.Graph(id="hold-drift"), html.Div(id="hold-drift-note")),
     ])
 
     t_flow = dbc.Tab(label="Smart money", tab_id="flow", children=[
         note(f"Net buying and selling across the {len(hcodes)} funds with portfolio data, in ₹ crore "
-             "(change in shares × share price). Funds buying = new positions plus additions."),
+             "(change in shares × share price). Bonuses, splits and demergers are excluded. "
+             "Funds buying = new positions plus additions. "
+             "Whether this predicts anything is tested on the Evidence tab."),
         dcc.Dropdown(id="flow-month", clearable=False, className="mt-2", style={"maxWidth": 260},
                      options=[d.date().isoformat() for d in sorted(data.holdings["as_of"].unique(), reverse=True)][:-1]
                      if not data.holdings.empty else [],
@@ -199,7 +175,8 @@ def create_app(db_path: Path | str | None = None) -> Dash:
 
     app.layout = dbc.Container([
         header,
-        dbc.Tabs([t_score, t_fund, t_sip, t_port, t_hold, t_flow, t_overlap, t_status], active_tab="score"),
+        dbc.Tabs([t_score, t_fund, t_sip, t_port, t_hold, t_flow, t_overlap, t_evidence, t_status],
+                 id="tabs", active_tab="score"),
         html.Footer(note("Data: AMFI (scheme master, market-cap list), mfapi.in (NAV history), "
                          "PPFAS and DSP portfolio disclosures. Not investment advice."), className="my-4"),
     ], fluid=True, style={"maxWidth": 1400})
@@ -220,28 +197,42 @@ def register_callbacks(app: Dash, data: Data, score: pd.DataFrame) -> None:
         df = df.drop(columns=["code"])
         return table(df, "score-dt", page_size=30, formats={
             "1Y": PCT, "3Y": PCT, "5Y": PCT, "Volatility": PCT, "Max drawdown": PCT, "Alpha": PCT,
-            "Sharpe": NUM2, "Beta": NUM2},
-            style_data_conditional=[{"if": {"filter_query": f'{{Fund}} = "{universe.BENCHMARK_NAME}"'},
+            "3Y vs index": PCT, "Beat index (3Y windows)": PCT0,
+            "Sharpe": NUM2, "Sortino": NUM2, "Beta": NUM2, "Info ratio": NUM2},
+            style_data_conditional=[{"if": {"filter_query": '{Category} = "Index"'},
                                      "fontStyle": "italic", "backgroundColor": "#f8fafc"}])
+
+    @app.callback(Output("evidence-body", "children"), Input("tabs", "active_tab"))
+    def evidence_tab(active):
+        return evidence_view.build(data.evidence) if active == "evidence" else no_update
 
     @app.callback(Output("fund-kpis", "children"), Output("fund-growth", "figure"), Output("fund-rolling", "figure"),
                   Output("fund-dd", "figure"), Output("fund-cal", "figure"),
                   Input("fund", "value"), Input("fund-period", "value"))
     def fund_view(code, period):
-        s, b = nav[code].dropna(), data.bench.dropna()
-        name, bname = data.label(code), universe.BENCHMARK_NAME
+        index_code = data.index_for(code)
+        s, b = nav[code].dropna(), nav[index_code].dropna()
+        name, bname = data.label(code), data.label(index_code)
         yrs = PERIODS[period]
         start = s.index[0] if yrs is None else max(s.index[0], s.index[-1] - pd.DateOffset(years=yrs))
         both = pd.concat({name: s, bname: b}, axis=1).loc[start:].dropna()
         tr, rm = perf.trailing_returns(s), perf.risk_metrics(s, b)
-        kpis = dbc.Row([
+        kpi_row = dbc.Row([
             kpi("Category", funds.at[code, "category_short"], funds.at[code, "amc"]),
-            kpi("3Y return (annualised)", pct(tr["3Y"]), f"benchmark {pct(perf.period_return(b, 3))}"),
+            kpi("3Y return (annualised)", pct(tr["3Y"]),
+                f"{bname.split(' (')[0]} {pct(perf.period_return(b, 3))}"),
             kpi("3Y Sharpe / beta",
                 "–" if rm.get("sharpe") is None else f"{rm['sharpe']:.2f} / {rm.get('beta', 0):.2f}",
                 f"alpha {pct(rm.get('alpha'))}"),
             kpi("Worst fall (3Y)", pct(rm.get("max_drawdown")), f"volatility {pct(rm.get('volatility'))}"),
         ])
+        est = style_mod.estimate(s, evidence_mod.style_factors(nav))
+        kpis = html.Div([kpi_row, note(
+            "Market-cap mix estimated from NAV alone: "
+            + ", ".join(f"{k.split()[0].lower()} {v:.0f}%" for k, v in est.weights.items())
+            + f" (fit R² {est.r_squared:.2f}, last {est.weeks} weeks). "
+            "Tested against real portfolios on the Evidence tab."
+        )] if est is not None else [kpi_row])
         g = fig.growth(perf.growth_of(both, both.index[0]), f"Growth of ₹10,000 since {both.index[0].date()}") \
             if len(both) > 1 else fig.empty("Not enough history")
         roll = pd.concat({name: perf.rolling_returns(s, 3), bname: perf.rolling_returns(b, 3)}, axis=1).dropna()
@@ -340,18 +331,19 @@ def register_callbacks(app: Dash, data: Data, score: pd.DataFrame) -> None:
             counts = ch["status"].value_counts()
             moved = ch[ch["status"] != "Unchanged"].assign(flow=lambda d: d["flow_cr"])[
                 ["instrument", "status", "quantity_prev", "quantity", "pct_nav_prev", "pct_nav", "flow"]].rename(
-                columns={"instrument": "Stock", "status": "Change", "quantity_prev": "Shares before",
+                columns={"instrument": "Stock", "status": "Change", "quantity_prev": "Shares before (restated)",
                          "quantity": "Shares now", "pct_nav_prev": "Weight before %", "pct_nav": "Weight now %",
                          "flow": "Bought (+) / sold (−), ₹ cr"})
             changes_view = html.Div([
                 note(" · ".join(f"{k}: {v}" for k, v in counts.items()) + f"  (vs {ch['prev'].iloc[0].date()})"),
-                table(moved, "hold-ch", formats={"Shares before": NUM0, "Shares now": NUM0, "Weight before %": NUM2,
-                                                 "Weight now %": NUM2, "Bought (+) / sold (−), ₹ cr": NUM1})])
-        drift = H.style_drift(h, code, funds.at[code, "category"])
+                table(moved, "hold-ch", formats={"Shares before (restated)": NUM0, "Shares now": NUM0,
+                                                 "Weight before %": NUM2, "Weight now %": NUM2,
+                                                 "Bought (+) / sold (−), ₹ cr": NUM1})])
+        drift = H.style_drift(h, code, funds.at[code, "category"], last=12)
         rule = drift["rule"].iloc[0] if len(drift) else ""
         fails = drift[drift["meets_rule"] == False]  # noqa: E712 - None means "no rule"
         drift_note = note("No SEBI market-cap rule for this category." if not rule else
-                          (f"Met the rule ({rule}) in all {len(drift)} months." if fails.empty else
+                          (f"Met the rule ({rule}) in all of the last {len(drift)} months." if fails.empty else
                            f"Below the rule ({rule}) in: {', '.join(d.date().isoformat() for d in fails['as_of'])}. "
                            "AMFI's list is updated twice a year and funds get time to rebalance, "
                            "so a small shortfall is a flag to look at, not proof of a breach."))
@@ -396,7 +388,7 @@ def register_callbacks(app: Dash, data: Data, score: pd.DataFrame) -> None:
 
 def _server():
     """WSGI entry point for gunicorn: `gunicorn smt.dashboard.app:server`."""
-    return create_app().server
+    return create_app(warm=True).server
 
 
 def __getattr__(name):     # build the app lazily so importing this module stays cheap

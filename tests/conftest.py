@@ -151,7 +151,7 @@ def fake_sources(tmp_path, market_cap_df):
     return Sources(
         scheme_master=lambda: fake_master(),
         nav_history=nav_history,
-        market_cap=lambda: ("31Dec2025", market_cap_df),
+        market_cap=lambda label: market_cap_df,
         connectors={name: FakeConnector(name, disclosure_titles(name)) for name in ("ppfas", "dsp")},
         raw_dir=tmp_path / "raw",
     )

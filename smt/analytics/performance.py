@@ -68,6 +68,19 @@ def drawdown(nav: pd.Series) -> pd.Series:
     return nav / nav.cummax() - 1
 
 
+def weekly_pair(nav: pd.Series, bench: pd.Series, start: pd.Timestamp | None = None) -> pd.DataFrame:
+    """Weekly returns of a fund ('f') and its benchmark ('b') on common dates.
+
+    Weekly, not daily. A fund's NAV and an index don't reflect the same closing moment:
+    foreign holdings strike on another clock and thinly traded small caps react late.
+    Daily beta therefore comes out too low, which makes alpha look too high.
+    """
+    both = pd.concat({"f": nav, "b": bench}, axis=1, join="inner", sort=True).dropna()
+    if start is not None:
+        both = both.loc[start:]
+    return both.resample("W-FRI").last().pct_change().dropna()
+
+
 def risk_metrics(nav: pd.Series, bench: pd.Series | None = None, years: float = 3.0,
                  rf: float = settings.RISK_FREE_RATE) -> dict[str, float | None]:
     """Risk statistics over the trailing window. Benchmark-relative ones need `bench`."""
@@ -82,7 +95,9 @@ def risk_metrics(nav: pd.Series, bench: pd.Series | None = None, years: float = 
     n = settings.TRADING_DAYS
     daily_rf = (1 + rf) ** (1 / n) - 1
     excess = r - daily_rf
-    downside = excess[excess < 0]
+    # Downside deviation counts every day (gains as zero). The std of the losing days alone
+    # measures how similar the losses are to each other, not how much downside there is.
+    downside_dev = float(np.sqrt((excess.clip(upper=0) ** 2).mean())) * np.sqrt(n)
     ann_ret = period_return(nav, years)
     vol = r.std() * np.sqrt(n)
     dd = drawdown(window).min()
@@ -91,27 +106,44 @@ def risk_metrics(nav: pd.Series, bench: pd.Series | None = None, years: float = 
         "return": ann_ret,
         "volatility": vol,
         "sharpe": (excess.mean() * n) / vol if vol > 0 else None,
-        "sortino": (excess.mean() * n) / (downside.std() * np.sqrt(n)) if len(downside) > 1 else None,
+        "sortino": (excess.mean() * n) / downside_dev if downside_dev > 0 else None,
         "max_drawdown": dd,
         "calmar": ann_ret / abs(dd) if ann_ret is not None and dd < 0 else None,
         "var_95_daily": float(np.percentile(r, 5)),
     }
     if bench is not None:
-        b = bench.dropna().loc[start:].pct_change().dropna()
-        both = pd.concat([r, b], axis=1, join="inner").dropna()
-        both.columns = ["f", "b"]
-        if len(both) > 60:
+        both = weekly_pair(nav, bench.dropna(), start)
+        if len(both) >= 26:
             beta = both["f"].cov(both["b"]) / both["b"].var()
             b_ret = period_return(bench.dropna(), years)
             out["beta"] = beta
-            # Jensen's alpha, annualised: fund return minus CAPM-expected return
             have_returns = ann_ret is not None and b_ret is not None
+            # Jensen's alpha, annualised: fund return minus CAPM-expected return
             out["alpha"] = (ann_ret - (rf + beta * (b_ret - rf))) if have_returns else None
             up, down = both[both["b"] > 0], both[both["b"] < 0]
             out["up_capture"] = up["f"].mean() / up["b"].mean() if len(up) else None
             out["down_capture"] = down["f"].mean() / down["b"].mean() if len(down) else None
             out["correlation"] = both["f"].corr(both["b"])
+            active = both["f"] - both["b"]
+            te = active.std() * np.sqrt(52)
+            out["active_return"] = ann_ret - b_ret if have_returns else None
+            out["tracking_error"] = te
+            out["information_ratio"] = active.mean() * 52 / te if te > 0 else None
     return out
+
+
+def rolling_vs_index(nav: pd.Series, bench: pd.Series, years: float = 3.0) -> dict[str, float | int | None]:
+    """How often the fund beat the index over every `years`-long holding period.
+
+    A single trailing number depends on the end date; this asks the question across all of them.
+    Windows overlap heavily, so `windows` is not a count of independent observations.
+    """
+    both = pd.concat({"f": rolling_returns(nav, years), "b": rolling_returns(bench, years)},
+                     axis=1, join="inner", sort=True).dropna()
+    if both.empty:
+        return {"hit_rate": None, "median_active": None, "windows": 0}
+    active = both["f"] - both["b"]
+    return {"hit_rate": float((active > 0).mean()), "median_active": float(active.median()), "windows": len(both)}
 
 
 def growth_of(navs: pd.DataFrame, start: pd.Timestamp, amount: float = 10_000) -> pd.DataFrame:

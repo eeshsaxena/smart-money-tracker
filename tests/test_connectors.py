@@ -41,6 +41,19 @@ def test_dsp_discovery_handles_inconsistent_names():
     assert [f.as_of for f in files] == [date(2026, 9, 30), date(2026, 8, 31), date(2026, 7, 31), date(2026, 2, 28)]
 
 
+def test_dsp_file_with_no_separator_before_the_month_is_read():
+    """A real case: this name was skipped, which silently removed March 2026 for all eight DSP funds."""
+    html = '<a href="https://www.dspim.com/x/b1bcdfd489-1/monthend-portfolio-31march2026.zip">m</a>'
+    files = DSPConnector().discover(html)
+    assert [f.as_of for f in files] == [date(2026, 3, 31)]
+
+
+def test_dsp_portfolio_file_with_no_readable_date_is_recorded():
+    connector = DSPConnector()
+    assert connector.discover('<a href="https://www.dspim.com/x/monthend-portfolio-final.zip">m</a>') == []
+    assert connector.unreadable == ("monthend-portfolio-final.zip",)
+
+
 def test_month_year_tokens():
     assert month_year(["dsp", "monthend", "31", "aug", "2026", "zip"]) == (2026, 8)
     assert month_year(["sept", "2025"]) == (2025, 9)
